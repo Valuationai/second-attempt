@@ -1,0 +1,215 @@
+"""FinSight — Features page (self-contained)."""
+import streamlit as st
+
+st.set_page_config(page_title="Features — FinSight", page_icon="", layout="wide")
+
+st.markdown("""
+<style>
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.block-container { padding-top: 0 !important; padding-bottom: 3rem; }
+#MainMenu, footer, header { visibility: hidden; }
+.topnav {
+    background: #0d1117; border-bottom: 1px solid #21262d;
+    padding: 0 2rem; display: flex; align-items: center;
+    justify-content: space-between; height: 56px;
+    position: sticky; top: 0; z-index: 999;
+}
+.topnav-brand { color: #f0f6fc; font-size: 1rem; font-weight: 700; text-decoration: none; }
+.topnav-links { display: flex; gap: 0.25rem; align-items: center; }
+.topnav-links a {
+    color: #8b949e; font-size: 0.87rem; font-weight: 500;
+    text-decoration: none; padding: 0.35rem 0.85rem;
+    border-radius: 6px; transition: background 0.15s, color 0.15s;
+}
+.topnav-links a:hover { background: #161b22; color: #f0f6fc; }
+.topnav-links a.active { color: #f0f6fc; background: #161b22; }
+.topnav-cta { background: #2e5eaa !important; color: #fff !important; font-weight: 600 !important; }
+hr { border-color: #21262d !important; }
+[data-testid="stExpander"] {
+    background: #161b22; border: 1px solid #30363d !important; border-radius: 8px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="topnav">
+    <span class="topnav-brand">FinSight</span>
+    <div class="topnav-links">
+        <a href="/" target="_self" class="topnav-cta">Analyser</a>
+        <a href="/Features" target="_self" class="active">Features</a>
+        <a href="/Pricing" target="_self">Pricing</a>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Hero ──────────────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="text-align:center;padding:3rem 1rem 2rem;">
+    <div style="display:inline-block;background:rgba(46,94,170,0.15);color:#58a6ff;
+                border:1px solid rgba(46,94,170,0.4);border-radius:20px;
+                padding:0.25rem 1rem;font-size:0.72rem;font-weight:700;
+                letter-spacing:1.5px;margin-bottom:1rem;">WHAT FINSIGHT CAN DO</div>
+    <h1 style="font-size:2.6rem;font-weight:800;color:#f0f6fc;
+               margin:0 0 1rem;letter-spacing:-0.5px;line-height:1.2;">
+        Institutional-grade financial analysis,<br>available to everyone.
+    </h1>
+    <p style="color:#8b949e;font-size:1.05rem;max-width:600px;margin:0 auto;">
+        FinSight reads your financial statements the same way a private equity analyst would —
+        pulling out what actually matters and telling you plainly what it means.
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+st.divider()
+
+def fcard(title, desc, points):
+    pts = "".join(
+        f"<div style='color:#8b949e;font-size:0.84rem;padding:0.2rem 0 0.2rem 0.9rem;"
+        f"border-left:2px solid #30363d;margin-bottom:0.3rem;'>{p}</div>" for p in points
+    )
+    st.markdown(f"""
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;
+                padding:1.6rem;margin-bottom:1rem;">
+        <div style="color:#f0f6fc;font-size:1rem;font-weight:700;margin-bottom:0.5rem;">{title}</div>
+        <div style="color:#8b949e;font-size:0.87rem;line-height:1.55;margin-bottom:1rem;">{desc}</div>
+        {pts}
+    </div>""", unsafe_allow_html=True)
+
+c1, c2, c3 = st.columns(3, gap="large")
+with c1:
+    fcard("Multi-Document Analysis",
+          "Upload your Income Statement, Balance Sheet, and Cash Flow Statement simultaneously. "
+          "FinSight reads all three together and synthesises a single, unified picture of your business.",
+          ["Accepts PDF, CSV, and TXT formats",
+           "Processes up to three statements at once",
+           "Cross-references figures across documents",
+           "Identifies inconsistencies automatically"])
+with c2:
+    fcard("10 Key Financial Metrics",
+          "Every analysis extracts and clearly displays the metrics that matter most — "
+          "from revenue and EBITDA through to working capital and debt ratios.",
+          ["Revenue, Net Profit, Gross and Net Margin",
+           "EBITDA and Operating Cash Flow",
+           "Current Ratio and Debt / Equity",
+           "Working Capital and Total Debt"])
+with c3:
+    fcard("Health Score and Rating",
+          "Get an instant snapshot of your company's financial position with a score out of 10 "
+          "and a plain-English rating — Strong, Moderate, or Weak.",
+          ["Score out of 10 with visual progress bar",
+           "Strong / Moderate / Weak rating",
+           "Colour-coded for instant clarity",
+           "Executive summary in plain English"])
+
+c4, c5, c6 = st.columns(3, gap="large")
+with c4:
+    fcard("Performance Summary",
+          "Four focused analysis sections break down exactly what is happening inside the business — "
+          "no jargon, no padding.",
+          ["Profitability — are margins holding up?",
+           "Cash Health — is the business cash-generative?",
+           "Working Capital — where is cash being tied up?",
+           "Balance Sheet — how much risk is on the books?"])
+with c5:
+    fcard("Investor View",
+          "A blunt, private-equity style interpretation of the business. "
+          "This is the section that tells you what an experienced investor would actually think — "
+          "not what looks good on paper.",
+          ["Cuts through accounting presentation",
+           "Highlights what an investor would flag",
+           "Written in plain, direct language",
+           "No hedging, no filler"])
+with c6:
+    fcard("Risks, Positives and Recommendations",
+          "Every analysis surfaces the top three risks, three positive signals, "
+          "and three actionable recommendations — all in a structured, easy-to-scan format.",
+          ["Top 3 risks with suggested fixes",
+           "Top 3 positive signals to build on",
+           "3 prioritised recommendations",
+           "Concise and actionable throughout"])
+
+st.divider()
+
+# ── Export ────────────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="text-align:center;padding:1rem 0 0.5rem;">
+    <div style="color:#8b949e;font-size:0.72rem;font-weight:700;letter-spacing:1.5px;margin-bottom:0.5rem;">
+        EXPORT AND SHARE</div>
+    <h2 style="color:#f0f6fc;font-size:1.6rem;font-weight:700;margin:0 0 0.5rem;">
+        Take your analysis anywhere</h2>
+    <p style="color:#8b949e;font-size:0.95rem;max-width:500px;margin:0 auto;">
+        Download your report in three formats — ready to share with your accountant, bank, or board.
+    </p>
+</div>""", unsafe_allow_html=True)
+st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
+
+ec1, ec2, ec3 = st.columns(3, gap="large")
+for col, title, desc in [
+    (ec1,"Excel Workbook (.xlsx)",
+     "A fully formatted, multi-sheet Excel report with colour-coded tables, metric summaries, "
+     "risk registers, and a health scorecard — ready for your CFO or accountant."),
+    (ec2,"Text Report (.txt)",
+     "A clean plain-text version of the full analysis. Easy to paste into an email, "
+     "a board paper, or any document."),
+    (ec3,"Raw Data (.json)",
+     "The structured data behind the analysis. Ideal for developers or anyone who wants "
+     "to import the data into another tool."),
+]:
+    with col:
+        st.markdown(f"""
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;
+                    padding:1.5rem;text-align:center;">
+            <div style="color:#58a6ff;font-size:0.95rem;font-weight:700;margin-bottom:0.6rem;">{title}</div>
+            <div style="color:#8b949e;font-size:0.85rem;line-height:1.55;">{desc}</div>
+        </div>""", unsafe_allow_html=True)
+
+st.divider()
+
+# ── How it works ──────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="text-align:center;padding:1rem 0 1.5rem;">
+    <div style="color:#8b949e;font-size:0.72rem;font-weight:700;letter-spacing:1.5px;margin-bottom:0.5rem;">
+        HOW IT WORKS</div>
+    <h2 style="color:#f0f6fc;font-size:1.6rem;font-weight:700;margin:0;">
+        Three steps to a complete analysis</h2>
+</div>""", unsafe_allow_html=True)
+
+s1, s2, s3 = st.columns(3, gap="large")
+for col, num, title, desc in [
+    (s1,"01","Upload your statements",
+     "Drop in your PDF, CSV, or TXT files — Income Statement, Balance Sheet, and Cash Flow Statement. "
+     "You can upload all three at once."),
+    (s2,"02","Click Analyse",
+     "FinSight sends your documents to a large language model trained on financial analysis. "
+     "Processing typically takes under 30 seconds."),
+    (s3,"03","Review and download",
+     "Your full analysis appears on screen — scroll through the dashboard, then download "
+     "the Excel or text report to share with your team."),
+]:
+    with col:
+        st.markdown(f"""
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:1.5rem;">
+            <div style="color:#2e5eaa;font-size:1.8rem;font-weight:800;margin-bottom:0.5rem;">{num}</div>
+            <div style="color:#f0f6fc;font-size:0.95rem;font-weight:700;margin-bottom:0.5rem;">{title}</div>
+            <div style="color:#8b949e;font-size:0.85rem;line-height:1.55;">{desc}</div>
+        </div>""", unsafe_allow_html=True)
+
+st.divider()
+
+st.markdown("""
+<div style="text-align:center;padding:2rem 1rem;">
+    <h2 style="color:#f0f6fc;font-size:1.6rem;font-weight:700;margin:0 0 0.5rem;">
+        Ready to analyse your statements?</h2>
+    <p style="color:#8b949e;font-size:0.95rem;margin:0 0 1.5rem;">
+        Free to use. No credit card required. Results in under 30 seconds.
+    </p>
+    <a href="/" target="_self" style="display:inline-block;background:#2e5eaa;color:#fff;
+       text-decoration:none;border-radius:8px;padding:0.7rem 2rem;font-size:0.95rem;font-weight:600;">
+        Go to Analyser
+    </a>
+</div>""", unsafe_allow_html=True)
+
+st.divider()
+st.markdown("<p style='text-align:center;color:#484f58;font-size:0.76rem;'>"
+            "FinSight &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",
+            unsafe_allow_html=True)
