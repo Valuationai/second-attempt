@@ -1031,7 +1031,7 @@ def main():
             st.text(raw)
             st.stop()
 
-        st.success("Analysis complete.", icon="v")
+        st.success("Analysis complete.")
         st.divider()
 
         # ── 1. Health Banner ──────────────────────────────────────────────────
