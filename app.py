@@ -1,5 +1,5 @@
 import streamlit as st
-import anthropic
+from groq import Groq
 import io
 import os
 import csv
@@ -41,7 +41,6 @@ def extract_text(uploaded_file) -> str:
         return extract_text_from_pdf(raw)
     if name.endswith(".csv"):
         return extract_text_from_csv(raw)
-    # plain text / txt
     return raw.decode("utf-8", errors="replace")
 
 
@@ -105,7 +104,7 @@ Write a concise but sharp analysis covering:
 4. Cost Structure — Are margins strong or under pressure? Any notable inefficiencies?
 5. Balance Sheet Strength — Debt levels and risk. Liquidity position.
 
-STEP 4: "WHAT IS REALLY GOING ON"
+STEP 4: WHAT IS REALLY GOING ON
 Provide a blunt, investor-style interpretation:
 - What kind of business is this really?
 - Is it healthy, fragile, or misleading?
@@ -125,26 +124,31 @@ OUTPUT STYLE:
 """
 
 
-# ── Claude API call ───────────────────────────────────────────────────────────
+# ── Groq API call ─────────────────────────────────────────────────────────────
 def analyse_financials(financial_text: str, api_key: str) -> str:
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-opus-4-5",
+    client = Groq(api_key=api_key)
+
+    # Truncate if too long (Groq context limit ~32k tokens)
+    max_chars = 24000
+    if len(financial_text) > max_chars:
+        financial_text = financial_text[:max_chars] + "\n\n[Document truncated due to length]"
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
         max_tokens=4096,
-        system=SYSTEM_PROMPT,
         messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": f"Please analyse the following financial statements:\n\n{financial_text}",
-            }
+            },
         ],
     )
-    return message.content[0].text
+    return response.choices[0].message.content
 
 
 # ── Section parser ────────────────────────────────────────────────────────────
 def parse_sections(analysis: str) -> dict:
-    """Split raw analysis text into labelled sections."""
     sections = {
         "summary": "",
         "analysis": "",
@@ -163,7 +167,7 @@ def parse_sections(analysis: str) -> dict:
 
     for line in lines:
         upper = line.upper()
-        if "STEP 3" in upper or "ANALYSIS" in upper and "STEP 3" in upper:
+        if "STEP 3" in upper or ("ANALYSIS" in upper and "STEP 3" in upper):
             flush(current); current = "analysis"
         elif "STEP 4" in upper or "WHAT IS REALLY GOING ON" in upper:
             flush(current); current = "whats_going_on"
@@ -183,15 +187,12 @@ def main():
         layout="wide",
     )
 
-    # ── Custom CSS ──────────────────────────────────────────────────────────
     st.markdown(
         """
         <style>
-        /* ── global ── */
         html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
         .main { background: #0f1117; }
 
-        /* ── hero header ── */
         .hero {
             background: linear-gradient(135deg, #1a1f2e 0%, #0d1117 100%);
             border: 1px solid #2d3748;
@@ -210,9 +211,9 @@ def main():
         .hero p { color: #8b949e; font-size: 1.05rem; margin: 0; }
         .hero .badge {
             display: inline-block;
-            background: rgba(56,189,248,0.12);
-            color: #38bdf8;
-            border: 1px solid rgba(56,189,248,0.25);
+            background: rgba(249,115,22,0.12);
+            color: #f97316;
+            border: 1px solid rgba(249,115,22,0.25);
             border-radius: 20px;
             padding: 0.2rem 0.8rem;
             font-size: 0.78rem;
@@ -221,20 +222,6 @@ def main():
             margin-bottom: 1rem;
         }
 
-        /* ── upload cards ── */
-        .upload-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
-        .upload-card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 1.2rem 1.5rem;
-            flex: 1;
-            min-width: 220px;
-        }
-        .upload-card h4 { color: #e6edf3; margin: 0 0 0.3rem 0; font-size: 0.95rem; }
-        .upload-card p  { color: #6e7681; font-size: 0.82rem; margin: 0; }
-
-        /* ── section cards ── */
         .section-card {
             background: #161b22;
             border: 1px solid #30363d;
@@ -247,9 +234,6 @@ def main():
             font-size: 1.15rem;
             font-weight: 600;
             margin: 0 0 1rem 0;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
         }
         .section-card pre {
             background: #0d1117;
@@ -263,57 +247,19 @@ def main():
             overflow: auto;
         }
 
-        /* ── metric pill row ── */
-        .metric-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
-        .metric-pill {
-            background: #1c2128;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 0.6rem 1rem;
-            min-width: 150px;
-        }
-        .metric-pill .label { color: #6e7681; font-size: 0.75rem; margin-bottom: 0.2rem; }
-        .metric-pill .value { color: #58a6ff; font-size: 1rem; font-weight: 600; }
-
-        /* ── pill tags ── */
-        .tag-risk {
-            display: inline-block;
-            background: rgba(248,81,73,0.12);
-            color: #f85149;
-            border: 1px solid rgba(248,81,73,0.3);
-            border-radius: 6px;
-            padding: 0.25rem 0.7rem;
-            font-size: 0.82rem;
-            margin: 0.2rem;
-        }
-        .tag-positive {
-            display: inline-block;
-            background: rgba(63,185,80,0.12);
-            color: #3fb950;
-            border: 1px solid rgba(63,185,80,0.3);
-            border-radius: 6px;
-            padding: 0.25rem 0.7rem;
-            font-size: 0.82rem;
-            margin: 0.2rem;
-        }
-
-        /* ── analyse button ── */
         div[data-testid="stButton"] > button {
-            background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+            background: linear-gradient(135deg, #ea580c 0%, #f97316 100%);
             color: white;
             border: none;
             border-radius: 10px;
             padding: 0.7rem 2.5rem;
             font-size: 1rem;
             font-weight: 600;
-            letter-spacing: 0.3px;
-            cursor: pointer;
             width: 100%;
             transition: opacity 0.2s;
         }
         div[data-testid="stButton"] > button:hover { opacity: 0.85; }
 
-        /* ── text area ── */
         textarea {
             background: #0d1117 !important;
             border: 1px solid #30363d !important;
@@ -325,11 +271,11 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # ── Hero ────────────────────────────────────────────────────────────────
+    # ── Hero ─────────────────────────────────────────────────────────────────
     st.markdown(
         """
         <div class="hero">
-            <div class="badge">POWERED BY CLAUDE AI</div>
+            <div class="badge">⚡ POWERED BY GROQ · FREE TO USE</div>
             <h1>📊 Financial Statement Analyzer</h1>
             <p>Upload financial statements and get institutional-grade forensic analysis in seconds.</p>
         </div>
@@ -337,35 +283,39 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # ── API Key ─────────────────────────────────────────────────────────────
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    # ── API Key ───────────────────────────────────────────────────────────────
+    api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
-        with st.expander("🔑 API Key Configuration", expanded=True):
+        with st.expander("🔑 Enter your Groq API Key", expanded=True):
             api_key = st.text_input(
-                "Anthropic API Key",
+                "Groq API Key",
                 type="password",
-                placeholder="sk-ant-...",
-                help="Your key is never stored. Set ANTHROPIC_API_KEY env var to skip this.",
+                placeholder="gsk_...",
+                help="Free at console.groq.com — set GROQ_API_KEY env var to skip this step.",
+            )
+            st.markdown(
+                "<small style='color:#6e7681'>Get a free key at "
+                "<a href='https://console.groq.com' target='_blank' style='color:#f97316'>"
+                "console.groq.com</a> → API Keys → Create Key</small>",
+                unsafe_allow_html=True,
             )
         if not api_key:
-            st.info("Enter your Anthropic API key above to get started.", icon="ℹ️")
+            st.info("Enter your free Groq API key above to get started.", icon="ℹ️")
 
     st.divider()
 
-    # ── Input section ───────────────────────────────────────────────────────
+    # ── Input ─────────────────────────────────────────────────────────────────
     col_left, col_right = st.columns([1, 1], gap="large")
 
     with col_left:
         st.markdown("### 📁 Upload Financial Statements")
         st.caption("Supported formats: PDF, CSV, TXT — upload one or more documents")
-
         uploaded_files = st.file_uploader(
-            "Drop files here or click to browse",
+            "Drop files here",
             type=["pdf", "csv", "txt"],
             accept_multiple_files=True,
             label_visibility="collapsed",
         )
-
         if uploaded_files:
             for f in uploaded_files:
                 size_kb = len(f.getvalue()) / 1024
@@ -387,97 +337,76 @@ def main():
 
     st.divider()
 
-    # ── Analyse button ───────────────────────────────────────────────────────
+    # ── Analyse button ────────────────────────────────────────────────────────
     _, btn_col, _ = st.columns([1, 2, 1])
     with btn_col:
         analyse_clicked = st.button("⚡ Analyse Financial Statements", use_container_width=True)
 
-    # ── Analysis ─────────────────────────────────────────────────────────────
+    # ── Run analysis ──────────────────────────────────────────────────────────
     if analyse_clicked:
         if not api_key:
-            st.error("Please provide your Anthropic API key.")
+            st.error("Please enter your Groq API key above.")
             st.stop()
 
-        # Combine all input sources
         all_text_parts = []
-
         if uploaded_files:
             for uf in uploaded_files:
                 uf.seek(0)
                 extracted = extract_text(uf)
                 all_text_parts.append(f"=== {uf.name} ===\n{extracted}")
-
         if pasted_text.strip():
             all_text_parts.append(f"=== Pasted Data ===\n{pasted_text.strip()}")
-
         if not all_text_parts:
             st.warning("Please upload at least one file or paste financial data.")
             st.stop()
 
         combined_text = "\n\n".join(all_text_parts)
 
-        with st.spinner("Analysing financial statements with Claude…"):
+        with st.spinner("Analysing with Groq AI (LLaMA 3.3 70B)…"):
             try:
                 raw_analysis = analyse_financials(combined_text, api_key)
-            except anthropic.AuthenticationError:
-                st.error("Invalid API key. Please check your Anthropic API key.")
-                st.stop()
-            except anthropic.RateLimitError:
-                st.error("Rate limit reached. Please wait a moment and try again.")
-                st.stop()
             except Exception as e:
-                st.error(f"Error calling Claude API: {e}")
+                err = str(e).lower()
+                if "invalid api key" in err or "authentication" in err or "401" in err:
+                    st.error("❌ Invalid Groq API key. Please check it and try again.")
+                elif "rate limit" in err or "429" in err:
+                    st.error("⏳ Rate limit hit. Please wait a moment and try again.")
+                else:
+                    st.error(f"Error calling Groq API: {e}")
                 st.stop()
 
         sections = parse_sections(raw_analysis)
-
         st.success("Analysis complete!", icon="✅")
         st.divider()
 
-        # ── 1. Financial Summary ───────────────────────────────────────────
-        st.markdown(
-            "<div class='section-card'><h2>📋 Financial Summary Table</h2>",
-            unsafe_allow_html=True,
-        )
+        # 1. Summary table
+        st.markdown("<div class='section-card'><h2>📋 Financial Summary Table</h2>", unsafe_allow_html=True)
         summary_text = sections["summary"] or raw_analysis.split("STEP 3")[0]
         st.markdown(f"<pre>{summary_text}</pre>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ── 2. Analysis ────────────────────────────────────────────────────
-        analysis_text = sections["analysis"]
-        if analysis_text:
-            st.markdown(
-                "<div class='section-card'><h2>🔍 Detailed Analysis</h2>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(analysis_text)
+        # 2. Analysis
+        if sections["analysis"]:
+            st.markdown("<div class='section-card'><h2>🔍 Detailed Analysis</h2>", unsafe_allow_html=True)
+            st.markdown(sections["analysis"])
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # ── 3. What's really going on ──────────────────────────────────────
-        wgo_text = sections["whats_going_on"]
-        if wgo_text:
-            st.markdown(
-                "<div class='section-card'><h2>🎯 What Is Really Going On</h2>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(wgo_text)
+        # 3. What's really going on
+        if sections["whats_going_on"]:
+            st.markdown("<div class='section-card'><h2>🎯 What Is Really Going On</h2>", unsafe_allow_html=True)
+            st.markdown(sections["whats_going_on"])
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # ── 4. Red flags & insights ────────────────────────────────────────
-        rf_text = sections["red_flags"]
-        if rf_text:
-            st.markdown(
-                "<div class='section-card'><h2>🚦 Red Flags & Key Insights</h2>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(rf_text)
+        # 4. Red flags
+        if sections["red_flags"]:
+            st.markdown("<div class='section-card'><h2>🚦 Red Flags & Key Insights</h2>", unsafe_allow_html=True)
+            st.markdown(sections["red_flags"])
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # ── 5. Full raw output (expandable) ───────────────────────────────
+        # 5. Raw output
         with st.expander("📄 Full Raw Analysis Output"):
             st.text(raw_analysis)
 
-        # ── Download ───────────────────────────────────────────────────────
         st.download_button(
             label="⬇️ Download Full Analysis (.txt)",
             data=raw_analysis,
@@ -486,11 +415,11 @@ def main():
             use_container_width=True,
         )
 
-    # ── Footer ───────────────────────────────────────────────────────────────
+    # ── Footer ────────────────────────────────────────────────────────────────
     st.divider()
     st.markdown(
         "<p style='text-align:center;color:#484f58;font-size:0.8rem;'>"
-        "Financial Statement Analyzer · Powered by Anthropic Claude · "
+        "Financial Statement Analyzer · Powered by Groq (LLaMA 3.3 70B) · "
         "Not financial advice — for analytical purposes only."
         "</p>",
         unsafe_allow_html=True,
