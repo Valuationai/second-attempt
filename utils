@@ -1,0 +1,170 @@
+"""Shared helpers — styles, nav bar, colours."""
+import streamlit as st
+
+
+NAV_STYLE = """
+<style>
+/* ── Reset & base ── */
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.block-container { padding-top: 0 !important; padding-bottom: 3rem; }
+#MainMenu, footer, header { visibility: hidden; }
+
+/* ── Nav bar ── */
+.topnav {
+    background: #0d1117;
+    border-bottom: 1px solid #21262d;
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 999;
+}
+.topnav-brand {
+    color: #f0f6fc;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    text-decoration: none;
+}
+.topnav-links {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+}
+.topnav-links a {
+    color: #8b949e;
+    font-size: 0.87rem;
+    font-weight: 500;
+    text-decoration: none;
+    padding: 0.35rem 0.85rem;
+    border-radius: 6px;
+    transition: background 0.15s, color 0.15s;
+}
+.topnav-links a:hover { background: #161b22; color: #f0f6fc; }
+.topnav-links a.active { color: #f0f6fc; background: #161b22; }
+.topnav-cta {
+    background: #2e5eaa;
+    color: #fff !important;
+    border-radius: 6px;
+    padding: 0.35rem 1rem !important;
+    font-weight: 600 !important;
+}
+.topnav-cta:hover { background: #1a4a8a !important; }
+
+/* ── Metric cards ── */
+[data-testid="metric-container"] {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+}
+[data-testid="metric-container"] label {
+    color: #8b949e !important;
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: #f0f6fc !important;
+    font-size: 1.2rem !important;
+    font-weight: 700 !important;
+}
+[data-testid="metric-container"] [data-testid="stMetricDelta"] {
+    font-size: 0.72rem !important;
+}
+
+/* ── Primary button ── */
+div[data-testid="stButton"] > button {
+    background: #2e5eaa;
+    color: white !important;
+    border: none;
+    border-radius: 8px;
+    padding: 0.7rem 2rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    width: 100%;
+    letter-spacing: 0.3px;
+    transition: background 0.2s;
+}
+div[data-testid="stButton"] > button:hover { background: #1a4a8a; }
+
+/* ── Download buttons ── */
+[data-testid="stDownloadButton"] > button {
+    background: #161b22 !important;
+    color: #f0f6fc !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    width: 100%;
+}
+[data-testid="stDownloadButton"] > button:hover {
+    border-color: #58a6ff !important;
+    color: #58a6ff !important;
+}
+
+/* ── Expanders ── */
+[data-testid="stExpander"] {
+    background: #161b22;
+    border: 1px solid #30363d !important;
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+}
+
+/* ── Divider ── */
+hr { border-color: #21262d !important; }
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"] {
+    border: 1px dashed #30363d;
+    border-radius: 8px;
+    padding: 0.5rem;
+}
+
+/* ── Text area ── */
+textarea {
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    color: #c9d1d9 !important;
+    border-radius: 8px !important;
+}
+</style>
+"""
+
+
+def inject_styles():
+    st.markdown(NAV_STYLE, unsafe_allow_html=True)
+
+
+def nav_bar(active: str = "analyser"):
+    """Render the sticky top navigation bar."""
+    pages = {
+        "analyser": ("Analyser",  "/"),
+        "features": ("Features",  "/Features"),
+        "pricing":  ("Pricing",   "/Pricing"),
+    }
+    links_html = ""
+    for key, (label, href) in pages.items():
+        cls = "active" if key == active else ""
+        if key == "analyser":
+            cls += " topnav-cta"
+        links_html += f'<a href="{href}" class="{cls.strip()}" target="_self">{label}</a>'
+
+    st.markdown(f"""
+    <div class="topnav">
+        <span class="topnav-brand">FinSight</span>
+        <div class="topnav-links">{links_html}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def section_label(text: str):
+    st.markdown(
+        f"<div style='color:#8b949e; font-size:0.72rem; font-weight:700; "
+        f"letter-spacing:1.5px; margin-bottom:0.6rem;'>{text}</div>",
+        unsafe_allow_html=True,
+    )
