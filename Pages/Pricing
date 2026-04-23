@@ -36,8 +36,8 @@ st.markdown("""
     <span class="topnav-brand">FinSight</span>
     <div class="topnav-links">
         <a href="/" target="_self" class="topnav-cta">Analyser</a>
-        <a href="/Features" target="_self">Features</a>
-        <a href="/Pricing" target="_self" class="active">Pricing</a>
+        <a href="/1_Features" target="_self">Features</a>
+        <a href="/2_Pricing" target="_self" class="active">Pricing</a>
     </div>
 </div>
 """, unsafe_allow_html=True)
