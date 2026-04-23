@@ -127,8 +127,8 @@ def inject_styles():
 def nav_bar(active="analyser"):
     links = {
         "analyser": ("Analyser",  "/"),
-        "features": ("Features",  "/Features"),
-        "pricing":  ("Pricing",   "/Pricing"),
+        "features": ("Features",  "/1_Features"),
+        "pricing":  ("Pricing",   "/2_Pricing"),
     }
     html = ""
     for key, (label, href) in links.items():
