@@ -8,13 +8,13 @@ from openpyxl.utils import get_column_letter
 from docx import Document as DocxDocument
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
- 
+
 st.set_page_config(
     page_title="DiligenceAI — Financial Statement Analyser",
     page_icon="",
     layout="wide",
 )
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DESIGN TOKENS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -22,11 +22,11 @@ st.set_page_config(
 # Accent: vivid teal #00D4AA, electric blue #4F8EF7
 # Cards: glass-morphism on dark bg
 # Status: emerald green / amber / coral red
- 
+
 STYLES = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
- 
+
 :root {
     --bg-base:       #080C14;
     --bg-card:       #0F1620;
@@ -44,27 +44,27 @@ STYLES = """
     --danger:        #FF5C6A;
     --nav-bg:        rgba(8,12,20,0.95);
 }
- 
+
 html, body, [class*="css"] {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: var(--bg-base) !important;
     color: var(--text-primary);
 }
- 
+
 .block-container {
     padding-top: 0 !important;
     padding-bottom: 4rem;
     max-width: 1280px;
 }
- 
+
 #MainMenu, footer, header { visibility: hidden; }
 [data-testid="stSidebarNav"], section[data-testid="stSidebar"] { display: none; }
- 
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-base); }
 ::-webkit-scrollbar-thumb { background: #2A3450; border-radius: 3px; }
- 
+
 /* ── Nav buttons ── */
 div[data-testid="stButton"] > button {
     background: rgba(255,255,255,0.04);
@@ -87,7 +87,7 @@ div[data-testid="stButton"] > button:hover {
     border-color: rgba(79,142,247,0.4) !important;
     transform: translateY(-1px);
 }
- 
+
 /* ── Primary CTA button ── */
 div[data-testid="stButton"][data-key="analyse_btn"] > button {
     background: linear-gradient(135deg, #4F8EF7 0%, #00D4AA 100%) !important;
@@ -105,7 +105,7 @@ div[data-testid="stButton"][data-key="analyse_btn"] > button:hover {
     box-shadow: 0 8px 32px rgba(79,142,247,0.5) !important;
     color: #080C14 !important;
 }
- 
+
 /* ── Metric cards ── */
 [data-testid="metric-container"] {
     background: linear-gradient(135deg, #0F1620 0%, #111827 100%);
@@ -133,7 +133,7 @@ div[data-testid="stButton"][data-key="analyse_btn"] > button:hover {
 [data-testid="metric-container"] [data-testid="stMetricDelta"] {
     font-size: 0.72rem !important;
 }
- 
+
 /* ── Download buttons ── */
 [data-testid="stDownloadButton"] > button {
     background: rgba(255,255,255,0.03) !important;
@@ -154,7 +154,7 @@ div[data-testid="stButton"][data-key="analyse_btn"] > button:hover {
     color: var(--accent-blue) !important;
     transform: translateY(-1px);
 }
- 
+
 /* ── Expanders ── */
 [data-testid="stExpander"] {
     background: var(--bg-card) !important;
@@ -165,7 +165,7 @@ div[data-testid="stButton"][data-key="analyse_btn"] > button:hover {
 [data-testid="stExpander"]:hover {
     border-color: var(--border-bright) !important;
 }
- 
+
 /* ── Inputs ── */
 hr { border-color: rgba(255,255,255,0.06) !important; }
 textarea, input[type="text"], input[type="password"], input[type="email"] {
@@ -179,7 +179,7 @@ textarea:focus, input:focus {
     border-color: rgba(79,142,247,0.5) !important;
     box-shadow: 0 0 0 3px rgba(79,142,247,0.1) !important;
 }
- 
+
 /* ── File uploader ── */
 [data-testid="stFileUploader"] {
     background: rgba(255,255,255,0.02) !important;
@@ -187,10 +187,10 @@ textarea:focus, input:focus {
     border-radius: 12px !important;
     padding: 0.5rem !important;
 }
- 
+
 /* ── Radio ── */
 [data-testid="stRadio"] label { color: var(--text-secondary) !important; }
- 
+
 /* ── Section divider ── */
 .dai-divider {
     height: 1px;
@@ -200,9 +200,9 @@ textarea:focus, input:focus {
 }
 </style>
 """
- 
+
 st.markdown(STYLES, unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SESSION STATE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -215,7 +215,7 @@ for key, default in [
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # NAV BAR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ st.markdown("""
     </div>
 </div>
 """, unsafe_allow_html=True)
- 
+
 pad_l, n1, n2, n3, n4, n5, pad_r = st.columns([2, 1, 1, 1, 1, 1, 2])
 with n1:
     if st.button("Analyser", key="nb_a", use_container_width=True):
@@ -258,9 +258,9 @@ with n5:
     else:
         if st.button("Sign Up", key="nb_s", use_container_width=True):
             st.session_state.page = "signup"; st.rerun()
- 
+
 st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SHARED HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -271,7 +271,7 @@ def section_label(text, accent="#4F8EF7"):
         f"<span style='color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;'>{text}</span>"
         f"</div>",
         unsafe_allow_html=True)
- 
+
 def card(content_html, glow=False, padding="1.4rem 1.6rem"):
     glow_style = "box-shadow:0 0 40px rgba(79,142,247,0.08);" if glow else ""
     st.markdown(
@@ -279,24 +279,24 @@ def card(content_html, glow=False, padding="1.4rem 1.6rem"):
         f"border:1px solid rgba(255,255,255,0.07);border-radius:14px;"
         f"padding:{padding};{glow_style}'>{content_html}</div>",
         unsafe_allow_html=True)
- 
+
 def gradient_badge(text, color1="#4F8EF7", color2="#00D4AA"):
     return (f"<span style='background:linear-gradient(135deg,{color1}22,{color2}22);"
             f"color:{color1};border:1px solid {color1}44;border-radius:20px;"
             f"padding:0.15rem 0.7rem;font-size:0.7rem;font-weight:700;letter-spacing:1px;'>{text}</span>")
- 
+
 def tick(t):
     return (f"<div style='display:flex;align-items:flex-start;gap:0.7rem;padding:0.6rem 0;"
             f"border-bottom:1px solid rgba(255,255,255,0.04);'>"
             f"<span style='color:#00D4AA;font-weight:700;font-size:0.85rem;margin-top:0.05rem;'>✓</span>"
             f"<span style='color:#C8D0E8;font-size:0.87rem;line-height:1.4;'>{t}</span></div>")
- 
+
 def cross(t):
     return (f"<div style='display:flex;align-items:flex-start;gap:0.7rem;padding:0.6rem 0;"
             f"border-bottom:1px solid rgba(255,255,255,0.04);'>"
             f"<span style='color:#4A5578;font-weight:700;font-size:0.85rem;margin-top:0.05rem;'>✕</span>"
             f"<span style='color:#4A5578;font-size:0.87rem;line-height:1.4;'>{t}</span></div>")
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # FILE EXTRACTION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,20 +314,20 @@ def extract_pdf(file_bytes):
         return "\n".join(parts)
     except Exception as e:
         return f"[PDF error: {e}]"
- 
+
 def extract_csv_text(file_bytes):
     try:
         content = file_bytes.decode("utf-8", errors="replace")
         return "\n".join(" | ".join(r) for r in csv.reader(io.StringIO(content)))
     except Exception as e:
         return f"[CSV error: {e}]"
- 
+
 def extract_file(uf):
     name = uf.name.lower(); raw = uf.read()
     if name.endswith(".pdf"): return extract_pdf(raw)
     if name.endswith(".csv"): return extract_csv_text(raw)
     return raw.decode("utf-8", errors="replace")
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT
 # ─────────────────────────────────────────────────────────────────────────────
@@ -359,7 +359,7 @@ Schema:
   "recommendations":[{"action":"string","rationale":"string"},{"action":"string","rationale":"string"},{"action":"string","rationale":"string"}]
 }
 Rules: "Not provided" for missing data. Never invent numbers. Format: "$12.4M","18.3%","2.1x". NZ English. Return ONLY JSON."""
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GROQ API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -380,7 +380,7 @@ def call_groq(text, api_key):
             try: return json.loads(m.group()), raw
             except Exception: pass
     return None, raw
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # REPORT BUILDERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -407,7 +407,7 @@ def build_txt(data):
     for i,rec in enumerate(data.get("recommendations",[]),1):
         lines+=[f"  {i}. {rec.get('action','')}",f"     {rec.get('rationale','')}",""]
     return "\n".join(lines)
- 
+
 def build_excel(data):
     wb = Workbook()
     DN="080C14"; AB="4F8EF7"; LB="0F2040"; WH="FFFFFF"; LG="F0F4FF"; MG="8B9BC8"
@@ -429,7 +429,7 @@ def build_excel(data):
         ws.merge_cells(rng); c=ws[rng.split(":")[0]]
         c.value=v; c.font=fn; c.alignment=al
         if fl_: c.fill=fl_
- 
+
     ws=wb.active; ws.title="Executive Summary"; ws.sheet_view.showGridLines=False
     ws.sheet_view.tabSelected=True
     for i,w in enumerate([2,28,22,22,22,22,2],1): ws.column_dimensions[get_column_letter(i)].width=w
@@ -458,7 +458,7 @@ def build_excel(data):
     iv=data.get("investor_view",""); rh(ws,r,max(60,len(iv)//4))
     ws.merge_cells(f"B{r}:F{r}"); c=ws[f"B{r}"]
     c.value=iv; c.font=bf(10,b=True,c="C8D0E8"); c.alignment=la(); c.fill=fl(LB); c.border=tb()
- 
+
     ws2=wb.create_sheet("KPI Metrics"); ws2.sheet_view.showGridLines=False
     for i,w in enumerate([2,30,20,35,2],1): ws2.column_dimensions[get_column_letter(i)].width=w
     r=1
@@ -477,15 +477,15 @@ def build_excel(data):
         c=ws2.cell(r,2); c.value=label; c.font=bf(10,b=True,c="F0F4FF"); c.fill=rf; c.alignment=la(False); c.border=tb()
         c=ws2.cell(r,3); c.value=item.get("value","N/A"); c.font=Font(name="Arial",size=11,bold=True,color=AB); c.fill=rf; c.alignment=ca(); c.border=tb()
         c=ws2.cell(r,4); c.value=item.get("note",""); c.font=bf(9,c="8B9BC8"); c.fill=rf; c.alignment=la(); c.border=tb(); r+=1
- 
+
     buf=io.BytesIO(); wb.save(buf); buf.seek(0); return buf.getvalue()
- 
+
 def build_docx(data):
     doc = DocxDocument()
     for section in doc.sections:
         section.top_margin=Inches(1); section.bottom_margin=Inches(1)
         section.left_margin=Inches(1.2); section.right_margin=Inches(1.2)
- 
+
     def add_heading(text, level=1, colour=None):
         p = doc.add_paragraph()
         p.paragraph_format.space_before=Pt(14); p.paragraph_format.space_after=Pt(4)
@@ -494,7 +494,7 @@ def build_docx(data):
         run.font.size=Pt(16 if level==1 else 13 if level==2 else 11)
         if colour: run.font.color.rgb=RGBColor(*colour)
         return p
- 
+
     def add_body(text, italic=False, colour=None):
         p = doc.add_paragraph()
         p.paragraph_format.space_after=Pt(4)
@@ -502,29 +502,29 @@ def build_docx(data):
         run.font.name="Arial"; run.font.size=Pt(10); run.italic=italic
         if colour: run.font.color.rgb=RGBColor(*colour)
         return p
- 
+
     def add_bullet(text):
         p = doc.add_paragraph(style="List Bullet")
         run = p.add_run(text)
         run.font.name="Arial"; run.font.size=Pt(10)
- 
+
     def add_divider():
         p = doc.add_paragraph()
         p.paragraph_format.space_before=Pt(4); p.paragraph_format.space_after=Pt(4)
         run = p.add_run("─"*60)
         run.font.color.rgb=RGBColor(42,52,80); run.font.size=Pt(8)
- 
+
     lbl=data.get("health_label","Moderate"); score=data.get("health_score",5)
     hcolour={"Strong":(0,212,170),"Moderate":(245,166,35),"Weak":(255,92,106)}.get(lbl,(245,166,35))
- 
+
     title=doc.add_paragraph(); title.alignment=WD_ALIGN_PARAGRAPH.CENTER
     tr=title.add_run("FINANCIAL STATEMENT ANALYSIS")
     tr.bold=True; tr.font.name="Arial"; tr.font.size=Pt(20)
- 
+
     sub=doc.add_paragraph(); sub.alignment=WD_ALIGN_PARAGRAPH.CENTER
     sr=sub.add_run("DiligenceAI — AI-Powered Financial Analysis")
     sr.font.name="Arial"; sr.font.size=Pt(11); sr.font.color.rgb=RGBColor(139,155,200)
- 
+
     add_divider()
     doc.add_paragraph()
     cp=doc.add_paragraph()
@@ -534,13 +534,13 @@ def build_docx(data):
     hr_=hp.add_run(f"Financial Health: {lbl}   |   Score: {score} / 10")
     hr_.bold=True; hr_.font.name="Arial"; hr_.font.size=Pt(12); hr_.font.color.rgb=RGBColor(*hcolour)
     add_divider()
- 
+
     add_heading("Executive Summary",2,(79,142,247))
     add_body(data.get("health_summary",""))
     add_heading("Investor View",2,(79,142,247))
     add_body(data.get("investor_view",""),italic=True)
     add_divider()
- 
+
     add_heading("Key Financial Metrics",2,(79,142,247))
     kpi_labels=[("revenue","Revenue"),("net_profit","Net Profit"),("gross_margin","Gross Margin"),
                 ("net_margin","Net Margin"),("ebitda","EBITDA"),("operating_cashflow","Operating Cash Flow"),
@@ -560,39 +560,39 @@ def build_docx(data):
                 for run in para.runs:
                     run.font.name="Arial"; run.font.size=Pt(10)
     add_divider()
- 
+
     for sk,sl in [("profitability","Profitability"),("cash_health","Cash Health"),
                   ("working_capital_analysis","Working Capital"),("balance_sheet","Balance Sheet")]:
         sec=data.get(sk,{}); add_heading(sl,2,(79,142,247))
         add_body(sec.get("headline",""),italic=True,colour=(139,155,200))
         for pt in sec.get("points",[]): add_bullet(pt)
     add_divider()
- 
+
     add_heading("Key Risks & Concerns",2,(255,92,106))
     for risk in data.get("risks",[]):
         rp=doc.add_paragraph(); rr=rp.add_run(risk.get("title",""))
         rr.bold=True; rr.font.name="Arial"; rr.font.size=Pt(10); rr.font.color.rgb=RGBColor(255,92,106)
         add_body(f"Issue: {risk.get('detail','')}"); add_body(f"Suggested Action: {risk.get('fix','')}",colour=(0,212,170))
- 
+
     add_heading("Positive Signals",2,(0,212,170))
     for pos in data.get("positives",[]):
         pp=doc.add_paragraph(); pr=pp.add_run(pos.get("title",""))
         pr.bold=True; pr.font.name="Arial"; pr.font.size=Pt(10); pr.font.color.rgb=RGBColor(0,212,170)
         add_body(pos.get("detail",""))
- 
+
     add_heading("Recommendations",2,(79,142,247))
     for i,rec in enumerate(data.get("recommendations",[]),1):
         rp=doc.add_paragraph(); rr=rp.add_run(f"{i}. {rec.get('action','')}")
         rr.bold=True; rr.font.name="Arial"; rr.font.size=Pt(10); rr.font.color.rgb=RGBColor(79,142,247)
         add_body(rec.get("rationale",""),colour=(139,155,200))
- 
+
     add_divider()
     fn=doc.add_paragraph(); fn.alignment=WD_ALIGN_PARAGRAPH.CENTER
     fr_=fn.add_run("DiligenceAI  ·  For informational purposes only — not financial advice.")
     fr_.font.name="Arial"; fr_.font.size=Pt(8); fr_.font.color.rgb=RGBColor(74,85,120)
- 
+
     buf=io.BytesIO(); doc.save(buf); buf.seek(0); return buf.getvalue()
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALYSIS RENDER HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -605,7 +605,11 @@ def render_banner(data):
              "Weak":("rgba(255,92,106,0.08)","#FF5C6A","rgba(255,92,106,0.25)")}
     bg,fg,border=colours.get(label,colours["Moderate"])
     bar_filled=int((score/10)*20)
-    bar_html="".join([f"<span style='display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;background:{'"+fg+"' if i<bar_filled else 'rgba(255,255,255,0.08)'}}'></span>" for i in range(20)])
+    bar_parts=[]
+    for i in range(20):
+        bar_col = fg if i < bar_filled else "rgba(255,255,255,0.08)"
+        bar_parts.append("<span style='display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;background:" + bar_col + ";'></span>")
+    bar_html = "".join(bar_parts)
     tags="".join(f"<span style='background:rgba(79,142,247,0.1);color:#4F8EF7;border:1px solid rgba(79,142,247,0.25);border-radius:6px;padding:0.15rem 0.6rem;font-size:0.68rem;font-weight:600;margin-right:0.3rem;letter-spacing:0.5px;'>{d}</span>" for d in docs)
     st.markdown(f"""
     <div style="background:{bg};border:1px solid {border};border-radius:16px;padding:2rem 2.2rem;margin-bottom:1.5rem;position:relative;overflow:hidden;">
@@ -626,7 +630,7 @@ def render_banner(data):
         </div>
         <div style="margin-top:1.2rem;padding-top:1.2rem;border-top:1px solid {border};color:#C8D0E8;font-size:0.93rem;line-height:1.7;">{summary}</div>
     </div>""", unsafe_allow_html=True)
- 
+
 def render_kpis(kpis):
     section_label("KEY FINANCIAL METRICS")
     order=[("revenue","Revenue"),("net_profit","Net Profit"),("gross_margin","Gross Margin"),("net_margin","Net Margin"),("ebitda","EBITDA"),
@@ -638,7 +642,7 @@ def render_kpis(kpis):
             dc="inverse" if any(w in note.lower() for w in ["pressure","decline","weak","low","risk"]) else "normal"
             with col: st.metric(label=label,value=value,delta=note if note else None,delta_color=dc)
         st.markdown("<div style='margin-bottom:0.5rem'></div>",unsafe_allow_html=True)
- 
+
 def render_card(title, section, accent="#4F8EF7"):
     headline=section.get("headline",""); points=section.get("points",[])
     st.markdown(f"""
@@ -655,7 +659,7 @@ def render_card(title, section, accent="#4F8EF7"):
                     f"border-left:2px solid rgba(255,255,255,0.06);margin-bottom:0.3rem;'>{pt}</div>",
                     unsafe_allow_html=True)
     st.markdown("")
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: LOGIN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -672,7 +676,7 @@ if st.session_state.page == "login":
             <h2 style="color:#F0F4FF;font-weight:700;margin:0 0 0.3rem;">Welcome back</h2>
             <p style="color:#8B9BC8;font-size:0.9rem;margin:0;">Log in to access your reports and downloads.</p>
         </div>""", unsafe_allow_html=True)
- 
+
         email    = st.text_input("Email address", placeholder="you@example.com")
         password = st.text_input("Password", type="password", placeholder="••••••••")
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
@@ -686,7 +690,7 @@ if st.session_state.page == "login":
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         if st.button("Create an account instead", key="go_signup", use_container_width=True):
             st.session_state.page="signup"; st.rerun()
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: SIGN UP
 # ─────────────────────────────────────────────────────────────────────────────
@@ -703,13 +707,13 @@ elif st.session_state.page == "signup":
             <h2 style="color:#F0F4FF;font-weight:700;margin:0 0 0.3rem;">Create your account</h2>
             <p style="color:#8B9BC8;font-size:0.9rem;margin:0;">Sign up to download reports and access Pro features.</p>
         </div>""", unsafe_allow_html=True)
- 
+
         email    = st.text_input("Email address", placeholder="you@example.com", key="su_email")
         password = st.text_input("Password", type="password", placeholder="Choose a password", key="su_pw")
         confirm  = st.text_input("Confirm password", type="password", placeholder="Repeat password", key="su_cp")
         plan     = st.radio("Choose your plan", ["Free — 5 analyses/month", "Pro — $10/month (unlimited)"], key="signup_plan")
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
- 
+
         if st.button("Create Account", key="signup_submit", use_container_width=True):
             if not email or not password:
                 st.error("Please fill in all fields.")
@@ -719,11 +723,11 @@ elif st.session_state.page == "signup":
                 st.session_state.logged_in=True; st.session_state.user_email=email
                 st.session_state.is_pro="Pro" in plan
                 st.session_state.page="analyser"; st.rerun()
- 
+
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         if st.button("Already have an account? Log in", key="go_login", use_container_width=True):
             st.session_state.page="login"; st.rerun()
- 
+
         if "Pro" in plan:
             st.markdown("""
             <div style="background:rgba(79,142,247,0.08);border:1px solid rgba(79,142,247,0.25);
@@ -731,12 +735,12 @@ elif st.session_state.page == "signup":
                 <div style="color:#4F8EF7;font-size:0.85rem;font-weight:600;margin-bottom:0.25rem;">Pro Plan — $10/month</div>
                 <div style="color:#8B9BC8;font-size:0.82rem;">Payments coming soon. Your Pro access will be activated at launch.</div>
             </div>""", unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: ANALYSER
 # ─────────────────────────────────────────────────────────────────────────────
 elif st.session_state.page == "analyser":
- 
+
     # Hero
     st.markdown("""
     <div style="text-align:center;padding:2.5rem 1rem 2rem;position:relative;">
@@ -764,7 +768,7 @@ elif st.session_state.page == "analyser":
             </p>
         </div>
     </div>""", unsafe_allow_html=True)
- 
+
     if st.session_state.logged_in:
         plan_badge = "PRO PLAN" if st.session_state.is_pro else "FREE PLAN"
         badge_col  = "#00D4AA" if st.session_state.is_pro else "#8B9BC8"
@@ -773,7 +777,7 @@ elif st.session_state.page == "analyser":
                     f"border:1px solid {badge_col}33;font-size:0.68rem;font-weight:700;"
                     f"letter-spacing:1.5px;padding:0.2rem 0.8rem;border-radius:20px;'>{plan_badge}</span></div>",
                     unsafe_allow_html=True)
- 
+
     # API Key
     api_key = os.getenv("GROQ_API_KEY","")
     if not api_key:
@@ -782,9 +786,9 @@ elif st.session_state.page == "analyser":
             st.caption("Get your free key at [console.groq.com](https://console.groq.com) → API Keys → Create Key")
         if not api_key:
             st.info("Enter your Groq API key above to get started.")
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
     # Upload area
     cl, cr = st.columns(2, gap="large")
     with cl:
@@ -806,7 +810,7 @@ elif st.session_state.page == "analyser":
                     <span style="color:#C8D0E8;font-size:0.82rem;">{f.name}</span>
                     <span style="color:#4A5578;font-size:0.75rem;margin-left:auto;">{kb:.1f} KB</span>
                 </div>""", unsafe_allow_html=True)
- 
+
     with cr:
         st.markdown("""
         <div style="margin-bottom:0.6rem;">
@@ -815,12 +819,12 @@ elif st.session_state.page == "analyser":
         </div>""", unsafe_allow_html=True)
         st.caption("Paste raw text, CSV rows, or numbers directly into the box")
         pasted = st.text_area("paste", height=155, placeholder="Revenue: $10.5M\nNet Profit: $1.8M\nTotal Assets: $28M\n...", label_visibility="collapsed")
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
     _, bc, _ = st.columns([1,2,1])
     with bc:
         go = st.button("Analyse Financial Statements", key="analyse_btn", use_container_width=True)
- 
+
     # Stats row
     st.markdown("""
     <div style="display:flex;justify-content:center;gap:3rem;padding:1.2rem 0;margin-bottom:0.5rem;">
@@ -841,7 +845,7 @@ elif st.session_state.page == "analyser":
             <div style="color:#4A5578;font-size:0.72rem;letter-spacing:0.5px;">TO GET STARTED</div>
         </div>
     </div>""", unsafe_allow_html=True)
- 
+
     # Run analysis
     if go:
         if not api_key:
@@ -852,7 +856,7 @@ elif st.session_state.page == "analyser":
                 uf.seek(0); parts.append(f"=== DOCUMENT: {uf.name} ===\n{extract_file(uf)}")
         if pasted.strip(): parts.append(f"=== PASTED DATA ===\n{pasted.strip()}")
         if not parts: st.warning("Please upload at least one file or paste financial data."); st.stop()
- 
+
         with st.spinner(f"Analysing {len(parts)} document(s) with DiligenceAI..."):
             try: data, raw = call_groq("\n\n".join(parts), api_key)
             except Exception as e:
@@ -861,23 +865,23 @@ elif st.session_state.page == "analyser":
                 elif "429" in err or "rate limit" in err:   st.error("Rate limit reached — please wait and retry.")
                 else: st.error(f"API error: {e}")
                 st.stop()
- 
+
         if not data: st.warning("Could not parse output."); st.text(raw); st.stop()
- 
+
         st.session_state.analysis_data=data
- 
+
         st.markdown("""
         <div style="background:rgba(0,212,170,0.08);border:1px solid rgba(0,212,170,0.25);
                     border-radius:10px;padding:0.8rem 1.2rem;margin:1rem 0;display:flex;align-items:center;gap:0.7rem;">
             <span style="color:#00D4AA;font-size:1rem;">✓</span>
             <span style="color:#00D4AA;font-size:0.9rem;font-weight:600;">Analysis complete</span>
         </div>""", unsafe_allow_html=True)
- 
+
         st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
         render_banner(data)
         render_kpis(data.get("kpis",{}))
         st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
         section_label("PERFORMANCE SUMMARY")
         l, r_col = st.columns(2, gap="large")
         with l:
@@ -887,7 +891,7 @@ elif st.session_state.page == "analyser":
             render_card("Working Capital", data.get("working_capital_analysis",{}), "#9B6DFF")
             render_card("Balance Sheet",   data.get("balance_sheet",{}), "#F5A623")
         st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
         section_label("INVESTOR VIEW")
         st.markdown(f"""
         <div style="background:linear-gradient(135deg,rgba(79,142,247,0.06),rgba(155,109,255,0.06));
@@ -897,7 +901,7 @@ elif st.session_state.page == "analyser":
             {data.get("investor_view","")}
         </div>""", unsafe_allow_html=True)
         st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
         rc_col, pc_col = st.columns(2, gap="large")
         with rc_col:
             section_label("KEY RISKS & CONCERNS", "#FF5C6A")
@@ -915,7 +919,7 @@ elif st.session_state.page == "analyser":
                     <div style="color:#8B9BC8;font-size:0.83rem;">{pos.get('detail','')}</div>
                 </div>""", unsafe_allow_html=True)
         st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
         section_label("RECOMMENDATIONS")
         for i,rec in enumerate(data.get("recommendations",[]),1):
             st.markdown(f"""
@@ -928,7 +932,7 @@ elif st.session_state.page == "analyser":
                 <div style="color:#8B9BC8;font-size:0.84rem;line-height:1.55;">{rec.get('rationale','')}</div>
             </div>""", unsafe_allow_html=True)
         st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
         # Downloads
         section_label("DOWNLOAD REPORT")
         if not st.session_state.logged_in:
@@ -970,10 +974,10 @@ elif st.session_state.page == "analyser":
                     st.markdown("<div style='background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:0.55rem;text-align:center;color:#4A5578;font-size:0.82rem;'>Word Doc — Pro only</div>", unsafe_allow_html=True)
                     if st.button("Upgrade to Pro", key="up_word", use_container_width=True):
                         st.session_state.page="pricing"; st.rerun()
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; Powered by Groq (LLaMA 3.3 70B) &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>", unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: FEATURES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1002,9 +1006,9 @@ elif st.session_state.page == "features":
             </p>
         </div>
     </div>""", unsafe_allow_html=True)
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
     section_label("WHAT IS DILIGENCEAI")
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
@@ -1021,7 +1025,7 @@ elif st.session_state.page == "features":
             same analysis a seasoned analyst would produce.
         </p>
     </div>""", unsafe_allow_html=True)
- 
+
     section_label("WHO IS IT FOR")
     c1,c2,c3,c4=st.columns(4,gap="medium")
     for col,(title,desc,colour) in zip([c1,c2,c3,c4],[
@@ -1037,7 +1041,7 @@ elif st.session_state.page == "features":
                 <div style="color:{colour};font-size:0.85rem;font-weight:700;margin-bottom:0.5rem;">{title}</div>
                 <div style="color:#8B9BC8;font-size:0.83rem;line-height:1.6;">{desc}</div>
             </div>""", unsafe_allow_html=True)
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
     section_label("HOW IT WORKS")
     s1,s2,s3,s4=st.columns(4,gap="medium")
@@ -1057,7 +1061,7 @@ elif st.session_state.page == "features":
                 <div style="color:#F0F4FF;font-size:0.88rem;font-weight:700;margin-bottom:0.4rem;">{title}</div>
                 <div style="color:#8B9BC8;font-size:0.82rem;line-height:1.6;">{desc}</div>
             </div>""", unsafe_allow_html=True)
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
     section_label("WHAT YOU GET IN EVERY ANALYSIS")
     fl_col,fr_col=st.columns(2,gap="large")
@@ -1083,10 +1087,10 @@ elif st.session_state.page == "features":
             {frow("Investor View","Blunt private-equity style interpretation of the business.","#9B6DFF")}
             {frow("Risks, Positives & Recommendations","Top 3 risks with fixes, positives, and 3 actionable recommendations.","#F5A623")}
         </div>""", unsafe_allow_html=True)
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>", unsafe_allow_html=True)
- 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: PRICING
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1110,11 +1114,11 @@ elif st.session_state.page == "pricing":
             </p>
         </div>
     </div>""", unsafe_allow_html=True)
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
     _,cf,cp,_=st.columns([1,2,2,1],gap="large")
- 
+
     with cf:
         st.markdown(f"""
         <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
@@ -1137,7 +1141,7 @@ elif st.session_state.page == "pricing":
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         if st.button("Get Started Free", key="cta_free", use_container_width=True):
             st.session_state.page="signup"; st.rerun()
- 
+
     with cp:
         st.markdown(f"""
         <div style="background:linear-gradient(135deg,rgba(79,142,247,0.08),rgba(0,212,170,0.05));
@@ -1150,11 +1154,13 @@ elif st.session_state.page == "pricing":
             </div>
             <div style="color:#4F8EF7;font-size:0.68rem;font-weight:700;letter-spacing:2px;margin-bottom:0.7rem;">PRO PLAN</div>
             <div style="margin-bottom:0.2rem;">
+                <span style="color:#4A5578;font-size:1.2rem;font-weight:500;text-decoration:line-through;margin-right:0.4rem;">$15</span>
                 <span style="font-size:3rem;font-weight:900;letter-spacing:-1px;background:linear-gradient(135deg,#4F8EF7,#00D4AA);
                              -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">$10</span>
                 <span style="color:#8B9BC8;font-size:0.9rem;"> / month</span>
             </div>
-            <div style="color:#4A5578;font-size:0.87rem;margin-bottom:1.8rem;">Cancel any time. No lock-in.</div>
+            <div style="display:inline-block;background:rgba(0,212,170,0.12);color:#00D4AA;border:1px solid rgba(0,212,170,0.3);border-radius:6px;padding:0.15rem 0.6rem;font-size:0.72rem;font-weight:700;letter-spacing:0.5px;margin-bottom:0.8rem;">33% OFF — LIMITED TIME</div>
+            <div style="color:#4A5578;font-size:0.87rem;margin-bottom:1rem;">Cancel any time. No lock-in.</div>
             <div style="margin-bottom:2rem;">
                 {tick("Unlimited analyses")}
                 {tick("Upload all 3 statements")}
@@ -1168,9 +1174,9 @@ elif st.session_state.page == "pricing":
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         if st.button("Sign Up for Pro", key="cta_pro", use_container_width=True):
             st.session_state.page="signup"; st.rerun()
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
- 
+
     st.markdown("""
     <div style="text-align:center;padding:0.5rem 0 1.2rem;">
         <h2 style="color:#F0F4FF;font-size:1.4rem;font-weight:700;margin:0 0 0.4rem;">Join the Pro waitlist</h2>
@@ -1182,7 +1188,7 @@ elif st.session_state.page == "pricing":
         if st.button("Notify me when Pro launches",key="wl_btn",use_container_width=True):
             if email and "@" in email: st.success(f"Thanks! We will be in touch at {email} when Pro goes live.")
             else: st.error("Please enter a valid email address.")
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
     st.markdown("""<div style="text-align:center;padding:0.5rem 0 1.2rem;">
         <div style="color:#4A5578;font-size:0.68rem;font-weight:700;letter-spacing:2px;margin-bottom:0.5rem;">FAQ</div>
@@ -1199,7 +1205,6 @@ elif st.session_state.page == "pricing":
         ]:
             with st.expander(q):
                 st.markdown(f"<div style='color:#C8D0E8;font-size:0.9rem;line-height:1.65;'>{a}</div>",unsafe_allow_html=True)
- 
+
     st.markdown("<div class='dai-divider'></div>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
- 
