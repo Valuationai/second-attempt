@@ -118,7 +118,7 @@ def db_save_analysis(user_id: str, data: dict) -> str:
         k: kpis.get(k, {}).get("value", "N/A")
         for k in ["revenue", "net_profit", "gross_margin", "net_margin", "ebitda",
                   "operating_cashflow", "current_ratio", "debt_to_equity",
-                  "working_capital", "total_debt"]
+                  "working_capital", "total_debt", "revenue_growth", "interest_coverage"]
     })
     insights = json.dumps({
         "health_summary":  data.get("health_summary", ""),
@@ -258,7 +258,8 @@ def build_pdf(data: dict) -> bytes:
     kpi_keys = [("revenue","Revenue"),("net_profit","Net Profit"),("gross_margin","Gross Margin"),
                 ("net_margin","Net Margin"),("ebitda","EBITDA"),("operating_cashflow","Operating Cash Flow"),
                 ("current_ratio","Current Ratio"),("debt_to_equity","Debt / Equity"),
-                ("working_capital","Working Capital"),("total_debt","Total Debt")]
+                ("working_capital","Working Capital"),("total_debt","Total Debt"),
+                ("revenue_growth","Revenue Growth"),("interest_coverage","Interest Coverage")]
     kpis  = data.get("kpis", {})
     tdata = [["Metric","Value","Commentary"]]
     for key, label in kpi_keys:
@@ -278,7 +279,8 @@ def build_pdf(data: dict) -> bytes:
     story.append(t); story.append(Spacer(1,12)); story.append(div)
     for sec_key, sec_title, accent in [
         ("profitability","Profitability",C_BLUE), ("cash_health","Cash Health",C_TEAL),
-        ("working_capital_analysis","Working Capital",C_PURP), ("balance_sheet","Balance Sheet",C_AMB)]:
+        ("revenue_growth","Revenue Growth",C_PURP), ("working_capital_analysis","Working Capital",C_AMB),
+        ("balance_sheet","Balance Sheet",C_RED), ("debt_leverage","Debt & Leverage",C_TEAL)]:
         sec = data.get(sec_key, {})
         story.append(Paragraph(sec_title.upper(),
                                 S(f"sh{sec_key}", fontSize=13, fontName="Helvetica-Bold", textColor=accent, spaceBefore=10, spaceAfter=4)))
@@ -380,7 +382,8 @@ def build_excel(data: dict) -> bytes:
     for idx,(key,label) in enumerate([("revenue","Revenue"),("net_profit","Net Profit"),
         ("gross_margin","Gross Margin"),("net_margin","Net Margin"),("ebitda","EBITDA"),
         ("operating_cashflow","Operating Cash Flow"),("current_ratio","Current Ratio"),
-        ("debt_to_equity","Debt/Equity"),("working_capital","Working Capital"),("total_debt","Total Debt")]):
+        ("debt_to_equity","Debt/Equity"),("working_capital","Working Capital"),("total_debt","Total Debt"),
+        ("revenue_growth","Revenue Growth"),("interest_coverage","Interest Coverage")]):
         item=kpis.get(key,{}); rf=fl(MN) if idx%2==0 else fl(DN); rh(ws2,r,22)
         c=ws2.cell(r,2); c.value=label; c.font=bf(10,b=True,c="F0F4FF"); c.fill=rf; c.alignment=la(False); c.border=tb()
         c=ws2.cell(r,3); c.value=item.get("value","N/A"); c.font=Font(name="Arial",size=11,bold=True,color=AB); c.fill=rf; c.alignment=ca(); c.border=tb()
@@ -445,7 +448,8 @@ def build_docx(data: dict) -> bytes:
                 for r in para.runs: r.font.name="Arial"; r.font.size=Pt(10)
     adiv()
     for sk,sl in [("profitability","Profitability"),("cash_health","Cash Health"),
-                  ("working_capital_analysis","Working Capital"),("balance_sheet","Balance Sheet")]:
+                  ("revenue_growth","Revenue Growth"),("working_capital_analysis","Working Capital"),
+                  ("balance_sheet","Balance Sheet"),("debt_leverage","Debt & Leverage")]:
         sec=data.get(sk,{}); ah(sl,2,(79,142,247)); ab(sec.get("headline",""),italic=True,col=(139,155,200))
         for pt in sec.get("points",[]): abul(pt)
     adiv()
@@ -589,7 +593,7 @@ with nb1:
     if st.button("Analyser", key="nb_analyser", use_container_width=True):
         st.session_state.page="analyser"; st.rerun()
 with nb2:
-    if st.button("Features", key="nb_features", use_container_width=True):
+    if st.button("About", key="nb_features", use_container_width=True):
         st.session_state.page="features"; st.rerun()
 with nb3:
     if st.button("Pricing", key="nb_pricing", use_container_width=True):
@@ -751,10 +755,26 @@ def extract_csv_text(file_bytes):
         return "\n".join(" | ".join(r) for r in csv.reader(io.StringIO(content)))
     except Exception as e: return f"[CSV error: {e}]"
 
+def extract_excel_text(file_bytes):
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
+        parts = []
+        for sheet in wb.worksheets:
+            parts.append(f"=== Sheet: {sheet.title} ===")
+            for row in sheet.iter_rows(values_only=True):
+                row_vals = [str(c).strip() if c is not None else "" for c in row]
+                row_text = " | ".join(row_vals)
+                if any(c for c in row_vals if c):  # skip fully empty rows
+                    parts.append(row_text)
+        return "\n".join(parts)
+    except Exception as e: return f"[Excel error: {e}]"
+
 def extract_file(uf):
     name=uf.name.lower(); raw=uf.read()
     if name.endswith(".pdf"): return extract_pdf_text(raw)
     if name.endswith(".csv"): return extract_csv_text(raw)
+    if name.endswith((".xlsx",".xls",".xlsm")): return extract_excel_text(raw)
     return raw.decode("utf-8",errors="replace")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1076,9 +1096,9 @@ elif st.session_state.page == "analyser":
     D()
     cl,cr=st.columns(2,gap="large")
     with cl:
-        st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Upload Financial Statements <span style='color:#4A5578;font-size:0.8rem;'>— PDF, CSV or TXT</span></div>",unsafe_allow_html=True)
+        st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Upload Financial Statements <span style='color:#4A5578;font-size:0.8rem;'>— PDF, CSV, Excel or Word</span></div>",unsafe_allow_html=True)
         st.caption("Upload all three statements at once for the best results")
-        uploaded_files=st.file_uploader("files",type=["pdf","csv","txt"],accept_multiple_files=True,label_visibility="collapsed")
+        uploaded_files=st.file_uploader("files",type=["pdf","csv","xlsx","xls","xlsm","docx","txt"],accept_multiple_files=True,label_visibility="collapsed")
         if uploaded_files:
             for f in uploaded_files:
                 kb=len(f.getvalue())/1024
@@ -1383,7 +1403,7 @@ elif st.session_state.page == "features":
     s1,s2,s3,s4=st.columns(4,gap="medium")
     for col,(num,title,desc) in zip([s1,s2,s3,s4],[
         ("01","Get your statements","Gather your Income Statement, Balance Sheet, and Cash Flow Statement from your accountant or Xero/MYOB."),
-        ("02","Upload the files","Select your files. PDF, CSV, and TXT supported. Upload all three at once."),
+        ("02","Upload the files","Select your files. PDF, CSV, Excel (.xlsx), Word (.docx) and TXT supported. Upload all three at once."),
         ("03","Click Analyse","DiligenceAI cross-references all documents and builds a unified analysis in 20–30 seconds."),
         ("04","Review and download","Free: TXT only. Pro: PDF, Excel, Word, share links, and more.")]):
         with col:
