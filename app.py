@@ -515,8 +515,8 @@ html,body,[class*="css"]{font-family:'Inter',-apple-system,sans-serif;background
 ::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:var(--bg);}
 ::-webkit-scrollbar-thumb{background:#2A3450;border-radius:3px;}
 div[data-testid="stButton"]>button{background:rgba(255,255,255,0.04);color:var(--sub)!important;
-  border:1px solid var(--border);border-radius:8px;padding:0.4rem 0.6rem;font-size:0.82rem;
-  font-weight:500;width:100%;white-space:nowrap;overflow:hidden;transition:all 0.2s;
+  border:1px solid var(--border);border-radius:8px;padding:0.4rem 0.5rem;font-size:0.78rem;
+  font-weight:500;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all 0.2s;
   letter-spacing:0.2px;font-family:'Inter',sans-serif;}
 div[data-testid="stButton"]>button:hover{background:rgba(79,142,247,0.15)!important;
   color:var(--blue)!important;border-color:rgba(79,142,247,0.4)!important;transform:translateY(-1px);}
@@ -555,6 +555,13 @@ textarea:focus,input:focus{border-color:rgba(79,142,247,0.5)!important;
 [data-testid="stRadio"] label,[data-testid="stCheckbox"] label{color:var(--sub)!important;}
 .dai-div{height:1px;background:linear-gradient(90deg,transparent,rgba(79,142,247,0.2),transparent);
   margin:1.5rem 0;border:none;}
+/* Pull nav button row up into the sticky header */
+[data-testid="stHorizontalBlock"]:first-of-type {
+  margin-top:-52px !important;
+  padding-bottom:8px !important;
+  position:relative;
+  z-index:1000;
+}
 </style>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -574,15 +581,17 @@ st.markdown("""
 <div style="background:rgba(8,12,20,0.97);border-bottom:1px solid rgba(255,255,255,0.06);
             padding:0 2.5rem;display:flex;align-items:center;height:60px;position:sticky;
             top:0;z-index:999;backdrop-filter:blur(20px);margin-bottom:0.5rem;">
-  <div style="display:flex;align-items:center;gap:0.5rem;">
+  <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0;">
     <div style="width:28px;height:28px;background:linear-gradient(135deg,#4F8EF7,#00D4AA);
                 border-radius:7px;display:flex;align-items:center;justify-content:center;">
       <span style="color:#080C14;font-weight:900;font-size:0.85rem;">D</span></div>
     <span style="font-size:1.05rem;font-weight:800;color:#F0F4FF;letter-spacing:-0.4px;">DiligenceAI</span>
   </div>
+  <div style="flex:1;"></div>
 </div>""", unsafe_allow_html=True)
 
-_p,nb1,nb2,nb3,nb4,nb5,nb6,nb7,_q = st.columns([1.2,1,1,1,1,1,1,1,1.2])
+# Nav buttons — centered, on same visual line as the logo bar above
+_p,nb1,nb2,nb3,nb4,nb5,nb6,nb7,_q = st.columns([0.5,1,1,1,1,1,1.4,1,0.5])
 with nb1:
     if st.button("Analyser", key="nb_analyser", use_container_width=True):
         st.session_state.page="analyser"; st.rerun()
@@ -1009,7 +1018,7 @@ elif st.session_state.page == "analyser":
                        -webkit-text-fill-color:transparent;background-clip:text;">in seconds, not hours.</span></h1>
         <p style="color:#8B9BC8;font-size:1.05rem;max-width:560px;margin:0 auto;line-height:1.7;">
           Upload your Income Statement, Balance Sheet, and Cash Flow Statement.
-          Get a complete forensic analysis — the same quality a private equity firm would produce.</p>
+          Get a complete forensic analysis.</p>
       </div>
     </div>""", unsafe_allow_html=True)
 
