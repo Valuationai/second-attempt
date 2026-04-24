@@ -661,11 +661,14 @@ Schema:{"company_name":"string","period":"string","documents_detected":["list"],
 "gross_margin":{"value":"string","note":"string"},"net_margin":{"value":"string","note":"string"},
 "ebitda":{"value":"string","note":"string"},"operating_cashflow":{"value":"string","note":"string"},
 "current_ratio":{"value":"string","note":"string"},"debt_to_equity":{"value":"string","note":"string"},
-"working_capital":{"value":"string","note":"string"},"total_debt":{"value":"string","note":"string"}},
+"working_capital":{"value":"string","note":"string"},"total_debt":{"value":"string","note":"string"},
+"revenue_growth":{"value":"string","note":"string"},"interest_coverage":{"value":"string","note":"string"}},
 "profitability":{"headline":"string","points":["string","string","string"]},
 "cash_health":{"headline":"string","points":["string","string","string"]},
 "working_capital_analysis":{"headline":"string","points":["string","string","string"]},
 "balance_sheet":{"headline":"string","points":["string","string","string"]},
+"revenue_growth":{"headline":"string","points":["string","string","string"]},
+"debt_leverage":{"headline":"string","points":["string","string","string"]},
 "investor_view":"3-4 sentences NZ English",
 "risks":[{"title":"string","detail":"string","fix":"string"},{"title":"string","detail":"string","fix":"string"},{"title":"string","detail":"string","fix":"string"}],
 "positives":[{"title":"string","detail":"string"},{"title":"string","detail":"string"},{"title":"string","detail":"string"}],
@@ -793,9 +796,10 @@ def render_kpis(kpis):
     order=[("revenue","Revenue"),("net_profit","Net Profit"),("gross_margin","Gross Margin"),
            ("net_margin","Net Margin"),("ebitda","EBITDA"),("operating_cashflow","Operating Cash Flow"),
            ("current_ratio","Current Ratio"),("debt_to_equity","Debt / Equity"),
-           ("working_capital","Working Capital"),("total_debt","Total Debt")]
-    for rs in range(0,len(order),5):
-        chunk=order[rs:rs+5]; cols=st.columns(len(chunk))
+           ("working_capital","Working Capital"),("total_debt","Total Debt"),
+           ("revenue_growth","Revenue Growth"),("interest_coverage","Interest Coverage")]
+    for rs in range(0,len(order),6):
+        chunk=order[rs:rs+6]; cols=st.columns(len(chunk))
         for col,(key,label) in zip(cols,chunk):
             item=kpis.get(key,{}); value=item.get("value","N/A"); note=item.get("note","")
             dc="inverse" if any(w in note.lower() for w in ["pressure","decline","weak","low","risk"]) else "normal"
@@ -819,13 +823,20 @@ def render_full_analysis(data, kp="main", allow_save=True):
     render_kpis(data.get("kpis",{}))
     D()
     slabel("PERFORMANCE SUMMARY")
-    lc,rc=st.columns(2,gap="large")
-    with lc:
+    c1,c2,c3=st.columns(3,gap="large")
+    with c1:
         render_card("Profitability",   data.get("profitability",{}),   "#4F8EF7")
+    with c2:
         render_card("Cash Health",     data.get("cash_health",{}),     "#00D4AA")
-    with rc:
-        render_card("Working Capital", data.get("working_capital_analysis",{}), "#9B6DFF")
-        render_card("Balance Sheet",   data.get("balance_sheet",{}),   "#F5A623")
+    with c3:
+        render_card("Revenue Growth",  data.get("revenue_growth",{}),  "#9B6DFF")
+    c4,c5,c6=st.columns(3,gap="large")
+    with c4:
+        render_card("Working Capital", data.get("working_capital_analysis",{}), "#F5A623")
+    with c5:
+        render_card("Balance Sheet",   data.get("balance_sheet",{}),   "#FF5C6A")
+    with c6:
+        render_card("Debt & Leverage", data.get("debt_leverage",{}),   "#00D4AA")
     D()
     slabel("INVESTOR VIEW")
     st.markdown(f"""
