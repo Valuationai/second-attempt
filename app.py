@@ -674,11 +674,37 @@ Rules: "Not provided" for missing. Never invent. Format: "$12.4M","18.3%","2.1x"
 
 def call_groq(text, api_key):
     client = Groq(api_key=api_key)
-    if len(text)>28000: text=text[:28000]+"\n\n[Truncated]"
-    resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile", max_tokens=4096, temperature=0.1,
-        messages=[{"role":"system","content":SYSTEM_PROMPT},
-                  {"role":"user","content":f"Analyse these financial statements:\n\n{text}"}])
+    # Keep well under the 12k TPM free-tier limit.
+    # ~4 chars per token → 6000 tokens of input headroom leaves room for system prompt + output
+    MAX_CHARS = 6000
+    if len(text) > MAX_CHARS:
+        # Try to keep the most financially dense content — numbers and short lines
+        lines = text.split("\n")
+        # Prioritise lines containing digits (financial data)
+        priority = [l for l in lines if any(c.isdigit() for c in l)]
+        other    = [l for l in lines if not any(c.isdigit() for c in l)]
+        condensed = "\n".join(priority + other)
+        if len(condensed) > MAX_CHARS:
+            condensed = condensed[:MAX_CHARS]
+        text = condensed + "\n\n[Document truncated to fit token limits]"
+
+    try:
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile", max_tokens=3000, temperature=0.1,
+            messages=[{"role":"system","content":SYSTEM_PROMPT},
+                      {"role":"user","content":f"Analyse these financial statements:\n\n{text}"}])
+    except Exception as e:
+        err = str(e)
+        if "413" in err or "rate_limit" in err or "too large" in err.lower():
+            # Hard fallback: cut to 3000 chars and retry once
+            text = text[:3000] + "\n\n[Further truncated due to rate limit]"
+            resp = client.chat.completions.create(
+                model="llama-3.3-70b-versatile", max_tokens=3000, temperature=0.1,
+                messages=[{"role":"system","content":SYSTEM_PROMPT},
+                          {"role":"user","content":f"Analyse these financial statements:\n\n{text}"}])
+        else:
+            raise
+
     raw = resp.choices[0].message.content.strip()
     raw = re.sub(r"^```(?:json)?","",raw).strip()
     raw = re.sub(r"```$","",raw).strip()
@@ -698,12 +724,21 @@ def extract_pdf_text(file_bytes):
         import pdfplumber
         parts=[]
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for page in pdf.pages:
+            # Cap at 30 pages — investor decks can be 100+ pages of mostly images
+            for page in pdf.pages[:30]:
                 t=page.extract_text()
-                if t: parts.append(t)
-                for table in page.extract_tables():
-                    for row in table:
-                        parts.append(" | ".join(str(c).strip() if c else "" for c in row))
+                if t:
+                    # Strip lines that are just whitespace or single chars (headers/footers)
+                    lines = [l.strip() for l in t.split("\n") if len(l.strip()) > 2]
+                    if lines:
+                        parts.append("\n".join(lines))
+                # Only extract tables from first 20 pages to save tokens
+                if page.page_number <= 20:
+                    for table in page.extract_tables():
+                        for row in table:
+                            row_text = " | ".join(str(c).strip() if c else "" for c in row)
+                            if any(c.isdigit() for c in row_text):  # only rows with numbers
+                                parts.append(row_text)
         return "\n".join(parts)
     except Exception as e: return f"[PDF error: {e}]"
 
@@ -1036,7 +1071,11 @@ elif st.session_state.page == "analyser":
         if uploaded_files:
             for f in uploaded_files:
                 kb=len(f.getvalue())/1024
-                st.markdown(f"<div style='display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0.6rem;background:rgba(79,142,247,0.06);border:1px solid rgba(79,142,247,0.15);border-radius:6px;margin-top:0.3rem;'><span style='color:#4F8EF7;font-size:0.75rem;'>DOC</span><span style='color:#C8D0E8;font-size:0.82rem;'>{f.name}</span><span style='color:#4A5578;font-size:0.75rem;margin-left:auto;'>{kb:.1f} KB</span></div>",unsafe_allow_html=True)
+                color = "#FF5C6A" if kb > 2000 else "#4F8EF7"
+                st.markdown(f"<div style='display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0.6rem;background:rgba(79,142,247,0.06);border:1px solid rgba(79,142,247,0.15);border-radius:6px;margin-top:0.3rem;'><span style='color:{color};font-size:0.75rem;'>DOC</span><span style='color:#C8D0E8;font-size:0.82rem;'>{f.name}</span><span style='color:#4A5578;font-size:0.75rem;margin-left:auto;'>{kb:.1f} KB</span></div>",unsafe_allow_html=True)
+            total_kb = sum(len(f.getvalue())/1024 for f in uploaded_files)
+            if total_kb > 2000:
+                st.warning(f"Large file detected ({total_kb:.0f} KB). The app will extract and compress the key financial data automatically. For best results, upload just the financial statement pages rather than full annual reports.")
     with cr:
         st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Or Paste Financial Data <span style='color:#4A5578;font-size:0.8rem;'>— any format</span></div>",unsafe_allow_html=True)
         st.caption("Paste raw text, CSV rows, or numbers directly")
@@ -1066,9 +1105,14 @@ elif st.session_state.page == "analyser":
             try: data,raw=call_groq("\n\n".join(parts),api_key)
             except Exception as e:
                 err=str(e).lower()
-                if "401" in err or "invalid api key" in err: st.error("Invalid Groq API key.")
-                elif "429" in err or "rate limit" in err: st.error("Rate limit — please wait and retry.")
-                else: st.error(f"API error: {e}")
+                if "401" in err or "invalid api key" in err:
+                    st.error("Invalid Groq API key. Check it at console.groq.com.")
+                elif "429" in err or "rate_limit" in err or "rate limit" in err:
+                    st.error("Groq rate limit reached. Wait 60 seconds and try again, or upgrade your Groq account at console.groq.com/settings/billing for higher limits.")
+                elif "413" in err or "too large" in err:
+                    st.error("Document too large even after compression. Try uploading just the key pages (income statement, balance sheet, cash flow) rather than the full document.")
+                else:
+                    st.error(f"API error: {e}")
                 st.stop()
         if not data: st.warning("Could not parse output."); st.text(raw); st.stop()
         st.session_state.analysis_data=data
