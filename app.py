@@ -513,11 +513,19 @@ st.markdown("""
       --txt:#F0F4FF;--sub:#8B9BC8;--mut:#4A5578;--blue:#4F8EF7;--teal:#00D4AA;
       --purple:#9B6DFF;--amber:#F5A623;--red:#FF5C6A;}
 html,body,[class*="css"]{font-family:'Inter',-apple-system,sans-serif;background:var(--bg)!important;color:var(--txt);}
-.block-container{padding-top:0!important;padding-bottom:4rem;max-width:1280px;}
+.block-container{
+  padding-top:1.5rem!important;
+  padding-bottom:4rem!important;
+  padding-left:3rem!important;
+  padding-right:3rem!important;
+  max-width:1280px!important;
+}
 #MainMenu,footer,header{visibility:hidden;}
 [data-testid="stSidebarNav"],section[data-testid="stSidebar"]{display:none;}
 ::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:var(--bg);}
 ::-webkit-scrollbar-thumb{background:#2A3450;border-radius:3px;}
+/* Consistent gap between all Streamlit elements */
+[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlock"] {gap:0.75rem;}
 div[data-testid="stButton"]>button{background:rgba(255,255,255,0.04);color:var(--sub)!important;
   border:1px solid var(--border);border-radius:8px;padding:0.4rem 0.6rem;font-size:0.82rem;
   font-weight:500;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all 0.2s;
@@ -558,7 +566,13 @@ textarea:focus,input:focus{border-color:rgba(79,142,247,0.5)!important;
   border:1px dashed rgba(79,142,247,0.3)!important;border-radius:12px!important;padding:0.5rem!important;}
 [data-testid="stRadio"] label,[data-testid="stCheckbox"] label{color:var(--sub)!important;}
 .dai-div{height:1px;background:linear-gradient(90deg,transparent,rgba(79,142,247,0.2),transparent);
-  margin:1.5rem 0;border:none;}
+  margin:2rem 0;border:none;}
+/* Ensure columns have consistent gap */
+[data-testid="stHorizontalBlock"]{gap:1rem!important;}
+/* Warning/info/error boxes consistent margin */
+[data-testid="stAlert"]{margin-top:0.5rem!important;margin-bottom:0.5rem!important;}
+/* Consistent caption spacing */
+[data-testid="stCaptionContainer"]{margin-top:0.2rem!important;margin-bottom:0.4rem!important;}
 </style>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -622,9 +636,9 @@ with nb7:
             for k,v in DEFAULTS.items(): st.session_state[k]=v
             st.rerun()
     else:
-        st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SHARED UI HELPERS
@@ -946,7 +960,7 @@ def render_full_analysis(data, kp="main", allow_save=True):
           <div style="color:#F0F4FF;font-size:1rem;font-weight:700;margin-bottom:0.4rem;">Log in to download your report</div>
           <div style="color:#8B9BC8;font-size:0.88rem;">Free accounts: TXT only. Pro: PDF, Excel, and Word.</div>
         </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>",unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         dl1,dl2=st.columns(2)
         with dl1:
             if st.button("Log In to Download",key=f"dlogin_{kp}",use_container_width=True):
@@ -1015,12 +1029,12 @@ if st.session_state.page in ("login","signup","account"):
             if st.button("Sign Up", key="tab_signup", use_container_width=True):
                 st.session_state.auth_tab="signup"; st.rerun()
 
-        st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
         if st.session_state.auth_tab == "login":
             email=st.text_input("Email address",placeholder="you@example.com",key="li_email")
             password=st.text_input("Password",type="password",placeholder="••••••••",key="li_pw")
-            st.markdown("<div style='height:0.5rem'></div>",unsafe_allow_html=True)
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
             if st.button("Log In",key="login_submit",use_container_width=True):
                 if email and password:
                     res=db_login_user(email,password)
@@ -1030,14 +1044,14 @@ if st.session_state.page in ("login","signup","account"):
                         st.session_state.page="analyser"; st.rerun()
                     else: st.error(res["error"])
                 else: st.error("Please enter your email and password.")
-            st.markdown("<div style='height:0.5rem'></div>",unsafe_allow_html=True)
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
             st.markdown("<div style='text-align:center;color:#4A5578;font-size:0.83rem;'>Don't have an account? Switch to Sign Up above.</div>", unsafe_allow_html=True)
         else:
             email=st.text_input("Email address",placeholder="you@example.com",key="su_email")
             pw=st.text_input("Password",type="password",placeholder="Choose a password",key="su_pw")
             confirm=st.text_input("Confirm password",type="password",placeholder="Repeat password",key="su_cp")
             plan=st.radio("Plan",["Free — 5 analyses/month","Pro — $10/month (unlimited)"],key="su_plan")
-            st.markdown("<div style='height:0.5rem'></div>",unsafe_allow_html=True)
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
             if st.button("Create Account",key="signup_submit",use_container_width=True):
                 if not email or not pw: st.error("Please fill in all fields.")
                 elif pw!=confirm: st.error("Passwords do not match.")
@@ -1049,7 +1063,7 @@ if st.session_state.page in ("login","signup","account"):
                         st.session_state.user_id=res["user_id"]; st.session_state.is_pro=res["is_pro"]
                         st.session_state.page="analyser"; st.rerun()
                     else: st.error(res["error"])
-            st.markdown("<div style='height:0.5rem'></div>",unsafe_allow_html=True)
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
             st.markdown("<div style='text-align:center;color:#4A5578;font-size:0.83rem;'>Already have an account? Switch to Log In above.</div>", unsafe_allow_html=True)
             if "Pro" in plan:
                 st.markdown("""
@@ -1259,7 +1273,7 @@ elif st.session_state.page == "compare":
     loaded=[db_get_analysis(aid) for aid in ids if db_get_analysis(aid)]
     companies=[a.get("raw_output",{}) for a in loaded]
     st.markdown("""
-    <div style="padding:1.5rem 0 1rem;">
+    <div style="padding:2rem 0 1.5rem;">
       <h1 style="font-size:1.8rem;font-weight:800;color:#F0F4FF;margin:0 0 0.3rem;">Company Comparison</h1>
       <p style="color:#8B9BC8;margin:0;">Side-by-side metrics for selected companies.</p>
     </div>""", unsafe_allow_html=True)
@@ -1303,7 +1317,7 @@ elif st.session_state.page == "compare":
 # ═════════════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "shared_view":
     st.markdown("""
-    <div style="padding:2rem 0 1rem;">
+    <div style="padding:2rem 0 1.5rem;">
       <h1 style="font-size:1.8rem;font-weight:800;color:#F0F4FF;margin:0 0 0.3rem;">View Shared Report</h1>
       <p style="color:#8B9BC8;margin:0;">Enter a Share ID to view a shared report.</p>
     </div>""", unsafe_allow_html=True)
@@ -1317,7 +1331,7 @@ elif st.session_state.page == "shared_view":
           <div style="color:#F0F4FF;font-size:1rem;font-weight:700;margin-bottom:0.4rem;">Log in to view shared reports</div>
           <div style="color:#8B9BC8;font-size:0.88rem;">Viewing shared reports requires a Pro account.</div>
         </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.8rem'></div>",unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         _,gc,_=st.columns([1,2,1])
         with gc:
             if st.button("Log In / Sign Up",key="shared_login_btn",use_container_width=True):
@@ -1330,7 +1344,7 @@ elif st.session_state.page == "shared_view":
           <div style="color:#F0F4FF;font-size:1rem;font-weight:700;margin-bottom:0.4rem;">Pro feature</div>
           <div style="color:#8B9BC8;font-size:0.88rem;margin-bottom:1rem;">Viewing and sharing reports is a Pro-only feature. Upgrade to unlock it.</div>
         </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.8rem'></div>",unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         _,gc,_=st.columns([1,2,1])
         with gc:
             if st.button("Upgrade to Pro",key="shared_upgrade_btn",use_container_width=True):
@@ -1482,7 +1496,7 @@ elif st.session_state.page == "pricing":
             {cross("Unlimited analyses")}
           </div>
         </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>",unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         if st.button("Get Started Free",key="cta_free",use_container_width=True):
             st.session_state.auth_tab="signup"; st.session_state.page="account"; st.rerun()
     with cp:
@@ -1515,7 +1529,7 @@ elif st.session_state.page == "pricing":
             {tick("Priority processing")}
           </div>
         </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>",unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         if st.button("Sign Up for Pro",key="cta_pro",use_container_width=True):
             st.session_state.auth_tab="signup"; st.session_state.page="account"; st.rerun()
     D()
