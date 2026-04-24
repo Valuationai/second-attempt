@@ -574,11 +574,11 @@ for k,v in DEFAULTS.items():
 # ─────────────────────────────────────────────────────────────────────────────
 # NAV BAR
 # ─────────────────────────────────────────────────────────────────────────────
-# ── Navbar: logo-only sticky HTML bar ────────────────────────────────────────
+# ── Navbar: centred logo sticky HTML bar ─────────────────────────────────────
 st.markdown("""
 <div style="background:rgba(8,12,20,0.97);border-bottom:1px solid rgba(255,255,255,0.06);
-            padding:0 2.5rem;display:flex;align-items:center;height:56px;position:sticky;
-            top:0;z-index:999;backdrop-filter:blur(20px);">
+            padding:0 2.5rem;display:flex;align-items:center;justify-content:center;
+            height:56px;position:sticky;top:0;z-index:999;backdrop-filter:blur(20px);">
   <div style="display:flex;align-items:center;gap:0.5rem;">
     <div style="width:28px;height:28px;background:linear-gradient(135deg,#4F8EF7,#00D4AA);
                 border-radius:7px;display:flex;align-items:center;justify-content:center;">
@@ -587,8 +587,10 @@ st.markdown("""
   </div>
 </div>""", unsafe_allow_html=True)
 
-# ── Nav buttons: clean columns row directly below the header ─────────────────
-_s,nb1,nb2,nb3,nb4,nb5,nb6,nb7,_e = st.columns([0.3,1,1,1,1,1,1.5,1,0.3])
+st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+
+# ── Nav buttons: fully centred row ───────────────────────────────────────────
+_s,nb1,nb2,nb3,nb4,nb5,nb6,nb7,_e = st.columns([0.8,1,1,1,1,1,1.5,1,0.8])
 with nb1:
     if st.button("Analyser", key="nb_analyser", use_container_width=True):
         st.session_state.page="analyser"; st.rerun()
