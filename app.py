@@ -1,7 +1,7 @@
-"""DiligenceAI — complete single-file Streamlit app. No external module imports."""
+"""DiligenceAI — Deal Analysis Platform. Single-file Streamlit app."""
 import streamlit as st
-from groq import Groq
 import io, os, csv, json, re
+import urllib.request, urllib.error
 import sqlite3, hashlib, uuid
 from datetime import datetime
 
@@ -51,12 +51,26 @@ def _init_db():
             id            TEXT PRIMARY KEY,
             email         TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            is_pro        INTEGER DEFAULT 0,
             created_at    TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS deals (
+            id              TEXT PRIMARY KEY,
+            user_id         TEXT NOT NULL,
+            name            TEXT DEFAULT 'Unnamed Deal',
+            industry        TEXT DEFAULT '',
+            status          TEXT DEFAULT 'screening',
+            screening_data  TEXT DEFAULT '{}',
+            dd_data         TEXT DEFAULT '{}',
+            risk_notes      TEXT DEFAULT '{}',
+            file_names      TEXT DEFAULT '[]',
+            created_at      TEXT DEFAULT (datetime('now')),
+            updated_at      TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id)
         );
         CREATE TABLE IF NOT EXISTS analyses (
             id            TEXT PRIMARY KEY,
             user_id       TEXT NOT NULL,
+            deal_id       TEXT DEFAULT '',
             company_name  TEXT DEFAULT 'Unknown Company',
             period        TEXT DEFAULT '',
             health_score  INTEGER DEFAULT 5,
@@ -84,16 +98,16 @@ def _init_db():
 def _hash(pw: str) -> str:
     return hashlib.sha256(pw.encode("utf-8")).hexdigest()
 
-def db_create_user(email: str, password: str, is_pro: bool = False) -> dict:
+def db_create_user(email: str, password: str) -> dict:
     db = _db()
     try:
         uid = str(uuid.uuid4())
         db.execute(
-            "INSERT INTO users (id, email, password_hash, is_pro) VALUES (?,?,?,?)",
-            (uid, email.lower().strip(), _hash(password), int(is_pro))
+            "INSERT INTO users (id, email, password_hash) VALUES (?,?,?)",
+            (uid, email.lower().strip(), _hash(password))
         )
         db.commit()
-        return {"ok": True, "user_id": uid, "email": email.lower().strip(), "is_pro": is_pro}
+        return {"ok": True, "user_id": uid, "email": email.lower().strip()}
     except sqlite3.IntegrityError:
         return {"ok": False, "error": "An account with this email already exists."}
     finally:
@@ -107,18 +121,103 @@ def db_login_user(email: str, password: str) -> dict:
     ).fetchone()
     db.close()
     if row:
-        return {"ok": True, "user_id": row["id"], "email": row["email"], "is_pro": bool(row["is_pro"])}
+        return {"ok": True, "user_id": row["id"], "email": row["email"]}
     return {"ok": False, "error": "Incorrect email or password."}
 
-def db_save_analysis(user_id: str, data: dict) -> str:
+# ── DEAL CRUD ──────────────────────────────────────────────────────────────
+def db_create_deal(user_id: str, name: str, industry: str = "", file_names: list = None) -> str:
+    db = _db()
+    did = str(uuid.uuid4())
+    db.execute(
+        "INSERT INTO deals (id, user_id, name, industry, file_names) VALUES (?,?,?,?,?)",
+        (did, user_id, name, industry, json.dumps(file_names or []))
+    )
+    db.commit()
+    db.close()
+    return did
+
+def db_save_screening(deal_id: str, screening_data: dict, file_names: list = None):
+    db = _db()
+    db.execute(
+        "UPDATE deals SET screening_data=?, status='screening', updated_at=datetime('now'), file_names=? WHERE id=?",
+        (json.dumps(screening_data), json.dumps(file_names or []), deal_id)
+    )
+    db.commit()
+    db.close()
+
+def db_promote_to_dd(deal_id: str):
+    db = _db()
+    db.execute(
+        "UPDATE deals SET status='dd', updated_at=datetime('now') WHERE id=?",
+        (deal_id,)
+    )
+    db.commit()
+    db.close()
+
+def db_save_dd(deal_id: str, dd_data: dict):
+    db = _db()
+    db.execute(
+        "UPDATE deals SET dd_data=?, updated_at=datetime('now') WHERE id=?",
+        (json.dumps(dd_data), deal_id)
+    )
+    db.commit()
+    db.close()
+
+def db_save_risk_notes(deal_id: str, notes: dict):
+    db = _db()
+    db.execute(
+        "UPDATE deals SET risk_notes=?, updated_at=datetime('now') WHERE id=?",
+        (json.dumps(notes), deal_id)
+    )
+    db.commit()
+    db.close()
+
+def db_get_deals(user_id: str) -> list:
+    db = _db()
+    rows = db.execute(
+        "SELECT * FROM deals WHERE user_id=? ORDER BY updated_at DESC", (user_id,)
+    ).fetchall()
+    db.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["screening_data"] = json.loads(d.get("screening_data") or "{}")
+        d["dd_data"]        = json.loads(d.get("dd_data") or "{}")
+        d["risk_notes"]     = json.loads(d.get("risk_notes") or "{}")
+        d["file_names"]     = json.loads(d.get("file_names") or "[]")
+        result.append(d)
+    return result
+
+def db_get_deal(deal_id: str):
+    db = _db()
+    row = db.execute("SELECT * FROM deals WHERE id=?", (deal_id,)).fetchone()
+    db.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["screening_data"] = json.loads(d.get("screening_data") or "{}")
+    d["dd_data"]        = json.loads(d.get("dd_data") or "{}")
+    d["risk_notes"]     = json.loads(d.get("risk_notes") or "{}")
+    d["file_names"]     = json.loads(d.get("file_names") or "[]")
+    return d
+
+def db_delete_deal(deal_id: str, user_id: str) -> bool:
+    db = _db()
+    cur = db.execute("DELETE FROM deals WHERE id=? AND user_id=?", (deal_id, user_id))
+    db.commit()
+    db.close()
+    return cur.rowcount > 0
+
+# ── ANALYSES (DD reports) ──────────────────────────────────────────────────
+def db_save_analysis(user_id: str, data: dict, deal_id: str = "") -> str:
     db = _db()
     aid = str(uuid.uuid4())
     kpis = data.get("kpis", {})
     key_metrics = json.dumps({
         k: kpis.get(k, {}).get("value", "N/A")
-        for k in ["revenue", "net_profit", "gross_margin", "net_margin", "ebitda",
-                  "operating_cashflow", "current_ratio", "debt_to_equity",
-                  "working_capital", "total_debt", "revenue_growth", "interest_coverage"]
+        for k in ["revenue","net_profit","gross_margin","net_margin","ebitda",
+                  "operating_cashflow","current_ratio","debt_to_equity",
+                  "working_capital","total_debt","revenue_growth","interest_coverage"]
     })
     insights = json.dumps({
         "health_summary":  data.get("health_summary", ""),
@@ -129,14 +228,14 @@ def db_save_analysis(user_id: str, data: dict) -> str:
     })
     db.execute(
         """INSERT INTO analyses
-           (id, user_id, company_name, period, health_score, health_label,
+           (id, user_id, deal_id, company_name, period, health_score, health_label,
             key_metrics, insights, raw_output)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        (aid, user_id,
-         data.get("company_name", "Unknown Company"),
-         data.get("period", ""),
-         data.get("health_score", 5),
-         data.get("health_label", "Moderate"),
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (aid, user_id, deal_id,
+         data.get("company_name","Unknown Company"),
+         data.get("period",""),
+         data.get("health_score",5),
+         data.get("health_label","Moderate"),
          key_metrics, insights, json.dumps(data))
     )
     db.commit()
@@ -170,9 +269,7 @@ def db_get_analysis(analysis_id: str):
 
 def db_delete_analysis(analysis_id: str, user_id: str) -> bool:
     db = _db()
-    cur = db.execute(
-        "DELETE FROM analyses WHERE id=? AND user_id=?", (analysis_id, user_id)
-    )
+    cur = db.execute("DELETE FROM analyses WHERE id=? AND user_id=?", (analysis_id, user_id))
     db.commit()
     db.close()
     return cur.rowcount > 0
@@ -185,10 +282,10 @@ def db_create_share(user_id: str, data: dict) -> str:
            (share_id, user_id, company_name, period, health_score, health_label, raw_output)
            VALUES (?,?,?,?,?,?,?)""",
         (share_id, user_id,
-         data.get("company_name", "Unknown Company"),
-         data.get("period", ""),
-         data.get("health_score", 5),
-         data.get("health_label", "Moderate"),
+         data.get("company_name","Unknown Company"),
+         data.get("period",""),
+         data.get("health_score",5),
+         data.get("health_label","Moderate"),
          json.dumps(data))
     )
     db.commit()
@@ -233,14 +330,14 @@ def build_pdf(data: dict) -> bytes:
         base = dict(fontName="Helvetica", fontSize=10, textColor=C_TXT, leading=14, spaceAfter=4)
         base.update(kw)
         return ParagraphStyle(name, **base)
-    lbl   = data.get("health_label", "Moderate")
+    lbl   = data.get("health_label","Moderate")
     score = data.get("health_score", 5)
     hcol  = {"Strong": C_TEAL, "Moderate": C_AMB, "Weak": C_RED}.get(lbl, C_AMB)
     div   = HRFlowable(width="100%", thickness=1, color=C_BOR, spaceAfter=10)
     story = []
     story.append(Paragraph("FINANCIAL STATEMENT ANALYSIS",
                             S("ti", fontSize=22, fontName="Helvetica-Bold", alignment=TA_CENTER, spaceAfter=4)))
-    story.append(Paragraph("DiligenceAI — AI-Powered Financial Analysis",
+    story.append(Paragraph("DiligenceAI — Deal Analysis Platform",
                             S("su", fontSize=11, textColor=C_SUB, alignment=TA_CENTER, spaceAfter=16)))
     story.append(div)
     story.append(Paragraph(f"{data.get('company_name','Unknown')}  ·  {data.get('period','')}",
@@ -249,9 +346,9 @@ def build_pdf(data: dict) -> bytes:
                             S("hs", fontSize=12, fontName="Helvetica-Bold", textColor=hcol, spaceAfter=12)))
     story.append(div)
     story.append(Paragraph("EXECUTIVE SUMMARY", S("lb", fontSize=7, fontName="Helvetica-Bold", textColor=C_MUT, spaceAfter=4)))
-    story.append(Paragraph(data.get("health_summary", ""), S("bo", fontSize=10, textColor=C_SUB, leading=15, spaceAfter=8)))
+    story.append(Paragraph(data.get("health_summary",""), S("bo", fontSize=10, textColor=C_SUB, leading=15, spaceAfter=8)))
     story.append(Paragraph("INVESTOR VIEW", S("lb2", fontSize=7, fontName="Helvetica-Bold", textColor=C_MUT, spaceAfter=4)))
-    story.append(Paragraph(data.get("investor_view", ""), S("iv", fontSize=10, textColor=C_SUB, leading=15, spaceAfter=8)))
+    story.append(Paragraph(data.get("investor_view",""), S("iv", fontSize=10, textColor=C_SUB, leading=15, spaceAfter=8)))
     story.append(div)
     story.append(Paragraph("KEY FINANCIAL METRICS",
                             S("h2", fontSize=13, fontName="Helvetica-Bold", textColor=C_BLUE, spaceBefore=6, spaceAfter=6)))
@@ -422,7 +519,7 @@ def build_docx(data: dict) -> bytes:
     t=doc.add_paragraph(); t.alignment=WD_ALIGN_PARAGRAPH.CENTER
     tr=t.add_run("FINANCIAL STATEMENT ANALYSIS"); tr.bold=True; tr.font.name="Arial"; tr.font.size=Pt(20)
     s=doc.add_paragraph(); s.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    sr=s.add_run("DiligenceAI — AI-Powered Financial Analysis")
+    sr=s.add_run("DiligenceAI — Deal Analysis Platform")
     sr.font.name="Arial"; sr.font.size=Pt(11); sr.font.color.rgb=RGBColor(139,155,200)
     adiv(); doc.add_paragraph()
     cp=doc.add_paragraph(); cr=cp.add_run(f"{data.get('company_name','Unknown')}  ·  {data.get('period','')}")
@@ -524,7 +621,6 @@ html,body,[class*="css"]{font-family:'Inter',-apple-system,sans-serif;background
 [data-testid="stSidebarNav"],section[data-testid="stSidebar"]{display:none;}
 ::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:var(--bg);}
 ::-webkit-scrollbar-thumb{background:#2A3450;border-radius:3px;}
-/* Consistent gap between all Streamlit elements */
 [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlock"] {gap:0.75rem;}
 div[data-testid="stButton"]>button{background:rgba(255,255,255,0.04);color:var(--sub)!important;
   border:1px solid var(--border);border-radius:8px;padding:0.4rem 0.6rem;font-size:0.82rem;
@@ -532,12 +628,14 @@ div[data-testid="stButton"]>button{background:rgba(255,255,255,0.04);color:var(-
   letter-spacing:0.2px;font-family:'Inter',sans-serif;}
 div[data-testid="stButton"]>button:hover{background:rgba(79,142,247,0.15)!important;
   color:var(--blue)!important;border-color:rgba(79,142,247,0.4)!important;transform:translateY(-1px);}
-div[data-testid="stButton"][data-key="analyse_btn"]>button{
+div[data-testid="stButton"][data-key="analyse_btn"]>button,
+div[data-testid="stButton"][data-key="screen_btn"]>button{
   background:linear-gradient(135deg,#4F8EF7,#00D4AA)!important;color:#080C14!important;
   border:none!important;font-size:0.97rem!important;font-weight:700!important;
   padding:0.75rem 2rem!important;border-radius:10px!important;
   box-shadow:0 4px 24px rgba(79,142,247,0.35)!important;}
-div[data-testid="stButton"][data-key="analyse_btn"]>button:hover{
+div[data-testid="stButton"][data-key="analyse_btn"]>button:hover,
+div[data-testid="stButton"][data-key="screen_btn"]>button:hover{
   transform:translateY(-2px)!important;box-shadow:0 8px 32px rgba(79,142,247,0.5)!important;}
 [data-testid="metric-container"]{background:linear-gradient(135deg,#0F1620,#111827);
   border:1px solid var(--border);border-radius:12px;padding:1rem 1.1rem;transition:border-color 0.2s;}
@@ -567,28 +665,29 @@ textarea:focus,input:focus{border-color:rgba(79,142,247,0.5)!important;
 [data-testid="stRadio"] label,[data-testid="stCheckbox"] label{color:var(--sub)!important;}
 .dai-div{height:1px;background:linear-gradient(90deg,transparent,rgba(79,142,247,0.2),transparent);
   margin:2rem 0;border:none;}
-/* Ensure columns have consistent gap */
 [data-testid="stHorizontalBlock"]{gap:1rem!important;}
-/* Warning/info/error boxes consistent margin */
 [data-testid="stAlert"]{margin-top:0.5rem!important;margin-bottom:0.5rem!important;}
-/* Consistent caption spacing */
 [data-testid="stCaptionContainer"]{margin-top:0.2rem!important;margin-bottom:0.4rem!important;}
 </style>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SESSION STATE
 # ─────────────────────────────────────────────────────────────────────────────
-DEFAULTS = {"page":"analyser","logged_in":False,"user_email":"","user_id":None,
-            "is_pro":False,"analysis_data":None,"loaded_analysis":None,
-            "compare_ids":[],"share_id_display":None,"auth_tab":"login"}
-for k,v in DEFAULTS.items():
+DEFAULTS = {
+    "page": "dashboard", "logged_in": False, "user_email": "", "user_id": None,
+    "analysis_data": None, "loaded_analysis": None,
+    "compare_ids": [], "share_id_display": None, "auth_tab": "login",
+    "active_deal_id": None,
+    "screening_result": None,
+    "dd_result": None,
+}
+for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ─────────────────────────────────────────────────────────────────────────────
 # NAV BAR
 # ─────────────────────────────────────────────────────────────────────────────
-# ── Navbar: centred logo sticky HTML bar ─────────────────────────────────────
 st.markdown("""
 <div style="background:rgba(8,12,20,0.97);border-bottom:1px solid rgba(255,255,255,0.06);
             padding:0 2.5rem;display:flex;align-items:center;justify-content:center;
@@ -603,40 +702,38 @@ st.markdown("""
 
 st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-# ── Nav buttons: fully centred row ───────────────────────────────────────────
-_s,nb1,nb2,nb3,nb4,nb5,nb6,nb7,_e = st.columns([0.8,1,1,1,1,1,1.5,1,0.8])
+_s, nb1, nb2, nb3, nb4, nb5, nb6, _e = st.columns([0.8, 1, 1.2, 1.2, 1, 1.5, 1, 0.8])
 with nb1:
-    if st.button("Analyser", key="nb_analyser", use_container_width=True):
-        st.session_state.page="analyser"; st.rerun()
-with nb2:
-    if st.button("About", key="nb_features", use_container_width=True):
-        st.session_state.page="features"; st.rerun()
-with nb3:
-    if st.button("Pricing", key="nb_pricing", use_container_width=True):
-        st.session_state.page="pricing"; st.rerun()
-with nb4:
     if st.button("Dashboard", key="nb_dashboard", use_container_width=True):
-        st.session_state.page="dashboard" if st.session_state.logged_in else "account"
+        st.session_state.page = "dashboard" if st.session_state.logged_in else "account"
+        st.rerun()
+with nb2:
+    if st.button("Deal Screening", key="nb_screening", use_container_width=True):
+        st.session_state.page = "screening"
+        st.rerun()
+with nb3:
+    if st.button("Due Diligence", key="nb_dd", use_container_width=True):
+        st.session_state.page = "dd_select"
+        st.rerun()
+with nb4:
+    if st.button("Shared", key="nb_shared", use_container_width=True):
+        st.session_state.page = "shared_view"
         st.rerun()
 with nb5:
-    if st.button("Shared", key="nb_shared", use_container_width=True):
-        st.session_state.page="shared_view"; st.rerun()
+    if st.button("About", key="nb_about", use_container_width=True):
+        st.session_state.page = "about"
+        st.rerun()
 with nb6:
     if st.session_state.logged_in:
         lbl = st.session_state.user_email.split("@")[0]
         if st.button(lbl, key="nb_account", use_container_width=True):
-            st.session_state.page="account"; st.rerun()
-    else:
-        if st.button("Log In / Sign Up", key="nb_account", use_container_width=True):
-            st.session_state.auth_tab="login"
-            st.session_state.page="account"; st.rerun()
-with nb7:
-    if st.session_state.logged_in:
-        if st.button("Log Out", key="nb_logout", use_container_width=True):
-            for k,v in DEFAULTS.items(): st.session_state[k]=v
+            st.session_state.page = "account"
             st.rerun()
     else:
-        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        if st.button("Log In / Sign Up", key="nb_account", use_container_width=True):
+            st.session_state.auth_tab = "login"
+            st.session_state.page = "account"
+            st.rerun()
 
 st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
@@ -653,10 +750,17 @@ def slabel(text, accent="#4F8EF7"):
         f"</div>", unsafe_allow_html=True)
 
 def hcolours(label):
-    return {"Strong":("rgba(0,212,170,0.08)","#00D4AA","rgba(0,212,170,0.25)"),
-            "Moderate":("rgba(245,166,35,0.08)","#F5A623","rgba(245,166,35,0.25)"),
-            "Weak":("rgba(255,92,106,0.08)","#FF5C6A","rgba(255,92,106,0.25)")
-            }.get(label,("rgba(245,166,35,0.08)","#F5A623","rgba(245,166,35,0.25)"))
+    return {
+        "Strong":  ("rgba(0,212,170,0.08)",  "#00D4AA", "rgba(0,212,170,0.25)"),
+        "Moderate":("rgba(245,166,35,0.08)", "#F5A623", "rgba(245,166,35,0.25)"),
+        "Weak":    ("rgba(255,92,106,0.08)", "#FF5C6A", "rgba(255,92,106,0.25)")
+    }.get(label, ("rgba(245,166,35,0.08)", "#F5A623", "rgba(245,166,35,0.25)"))
+
+def status_colour(status):
+    return {"screening": "#F5A623", "dd": "#4F8EF7", "completed": "#00D4AA"}.get(status, "#8B9BC8")
+
+def status_label(status):
+    return {"screening": "Screening", "dd": "Due Diligence", "completed": "Completed"}.get(status, status.title())
 
 def tick(t):
     return (f"<div style='display:flex;align-items:flex-start;gap:0.7rem;padding:0.6rem 0;"
@@ -664,16 +768,27 @@ def tick(t):
             f"<span style='color:#00D4AA;font-weight:700;'>✓</span>"
             f"<span style='color:#C8D0E8;font-size:0.87rem;line-height:1.4;'>{t}</span></div>")
 
-def cross(t):
-    return (f"<div style='display:flex;align-items:flex-start;gap:0.7rem;padding:0.6rem 0;"
-            f"border-bottom:1px solid rgba(255,255,255,0.04);'>"
-            f"<span style='color:#4A5578;font-weight:700;'>✕</span>"
-            f"<span style='color:#4A5578;font-size:0.87rem;line-height:1.4;'>{t}</span></div>")
+# ─────────────────────────────────────────────────────────────────────────────
+# GROQ — SCREENING PROMPT
+# ─────────────────────────────────────────────────────────────────────────────
+SCREENING_PROMPT = """You are a senior investment analyst. Analyse the uploaded documents (pitch deck, CIM, financials) and return ONLY valid JSON — no markdown, no extra text.
+Schema:
+{"deal_name":"string","industry":"string","summary":"2-3 sentences describing what the business does",
+"investment_score":0-100,
+"score_label":"Strong"|"Promising"|"Borderline"|"Pass",
+"recommendation":"Proceed"|"Pass",
+"recommendation_rationale":"2 sentences explaining recommendation",
+"key_risks":[{"title":"string","detail":"string"},{"title":"string","detail":"string"},{"title":"string","detail":"string"}],
+"strengths":[{"title":"string","detail":"string"},{"title":"string","detail":"string"},{"title":"string","detail":"string"}],
+"red_flags":["string","string"],
+"key_metrics":{"revenue":"string or Not provided","growth_rate":"string or Not provided","gross_margin":"string or Not provided","burn_rate":"string or Not provided","runway":"string or Not provided"},
+"investor_view":"2-3 sentence blunt PE-style view"}
+Rules: "Not provided" for missing. Never invent figures. NZ English. Return ONLY JSON."""
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GROQ
+# GROQ — DD PROMPT
 # ─────────────────────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are a highly skilled financial analyst and forensic accountant based in New Zealand.
+DD_PROMPT = """You are a highly skilled financial analyst and forensic accountant based in New Zealand.
 Cross-reference all documents together to produce a single unified analysis. Return ONLY valid JSON — no markdown, no extra text.
 Schema:{"company_name":"string","period":"string","documents_detected":["list"],
 "health_score":1-10,"health_label":"Strong"|"Moderate"|"Weak","health_summary":"2-3 sentences NZ English",
@@ -690,50 +805,63 @@ Schema:{"company_name":"string","period":"string","documents_detected":["list"],
 "revenue_growth":{"headline":"string","points":["string","string","string"]},
 "debt_leverage":{"headline":"string","points":["string","string","string"]},
 "investor_view":"3-4 sentences NZ English",
+"legal_flags":["string","string"],
+"financial_inconsistencies":["string","string"],
+"missing_information":["string","string"],
 "risks":[{"title":"string","detail":"string","fix":"string"},{"title":"string","detail":"string","fix":"string"},{"title":"string","detail":"string","fix":"string"}],
 "positives":[{"title":"string","detail":"string"},{"title":"string","detail":"string"},{"title":"string","detail":"string"}],
 "recommendations":[{"action":"string","rationale":"string"},{"action":"string","rationale":"string"},{"action":"string","rationale":"string"}]}
 Rules: "Not provided" for missing. Never invent. Format: "$12.4M","18.3%","2.1x". NZ English. Return ONLY JSON."""
 
-def call_groq(text, api_key):
-    client = Groq(api_key=api_key)
-    # Keep well under the 12k TPM free-tier limit.
-    # ~4 chars per token → 6000 tokens of input headroom leaves room for system prompt + output
+def _groq_request(api_key, system_prompt, user_text):
+    """Call Groq REST API directly using stdlib urllib — no SDK needed."""
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    payload = json.dumps({
+        "model": "llama-3.3-70b-versatile",
+        "max_tokens": 3000,
+        "temperature": 0.1,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": f"Analyse these documents:\n\n{user_text}"}
+        ]
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    return body["choices"][0]["message"]["content"].strip()
+
+def call_groq(text, api_key, system_prompt):
     MAX_CHARS = 6000
     if len(text) > MAX_CHARS:
-        # Try to keep the most financially dense content — numbers and short lines
         lines = text.split("\n")
-        # Prioritise lines containing digits (financial data)
         priority = [l for l in lines if any(c.isdigit() for c in l)]
         other    = [l for l in lines if not any(c.isdigit() for c in l)]
         condensed = "\n".join(priority + other)
         if len(condensed) > MAX_CHARS:
             condensed = condensed[:MAX_CHARS]
         text = condensed + "\n\n[Document truncated to fit token limits]"
-
     try:
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile", max_tokens=3000, temperature=0.1,
-            messages=[{"role":"system","content":SYSTEM_PROMPT},
-                      {"role":"user","content":f"Analyse these financial statements:\n\n{text}"}])
-    except Exception as e:
-        err = str(e)
-        if "413" in err or "rate_limit" in err or "too large" in err.lower():
-            # Hard fallback: cut to 3000 chars and retry once
-            text = text[:3000] + "\n\n[Further truncated due to rate limit]"
-            resp = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", max_tokens=3000, temperature=0.1,
-                messages=[{"role":"system","content":SYSTEM_PROMPT},
-                          {"role":"user","content":f"Analyse these financial statements:\n\n{text}"}])
+        raw = _groq_request(api_key, system_prompt, text)
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        if e.code in (413, 429) or "rate_limit" in err_body.lower() or "too large" in err_body.lower():
+            text = text[:3000] + "\n\n[Further truncated]"
+            raw = _groq_request(api_key, system_prompt, text)
         else:
-            raise
-
-    raw = resp.choices[0].message.content.strip()
-    raw = re.sub(r"^```(?:json)?","",raw).strip()
-    raw = re.sub(r"```$","",raw).strip()
+            raise RuntimeError(f"Groq API error {e.code}: {err_body}") from e
+    raw = re.sub(r"^```(?:json)?", "", raw).strip()
+    raw = re.sub(r"```$", "", raw).strip()
     try: return json.loads(raw), raw
     except Exception:
-        m=re.search(r'\{.*\}',raw,re.DOTALL)
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             try: return json.loads(m.group()), raw
             except Exception: pass
@@ -747,20 +875,17 @@ def extract_pdf_text(file_bytes):
         import pdfplumber
         parts=[]
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            # Cap at 30 pages — investor decks can be 100+ pages of mostly images
             for page in pdf.pages[:30]:
                 t=page.extract_text()
                 if t:
-                    # Strip lines that are just whitespace or single chars (headers/footers)
                     lines = [l.strip() for l in t.split("\n") if len(l.strip()) > 2]
                     if lines:
                         parts.append("\n".join(lines))
-                # Only extract tables from first 20 pages to save tokens
                 if page.page_number <= 20:
                     for table in page.extract_tables():
                         for row in table:
                             row_text = " | ".join(str(c).strip() if c else "" for c in row)
-                            if any(c.isdigit() for c in row_text):  # only rows with numbers
+                            if any(c.isdigit() for c in row_text):
                                 parts.append(row_text)
         return "\n".join(parts)
     except Exception as e: return f"[PDF error: {e}]"
@@ -781,7 +906,7 @@ def extract_excel_text(file_bytes):
             for row in sheet.iter_rows(values_only=True):
                 row_vals = [str(c).strip() if c is not None else "" for c in row]
                 row_text = " | ".join(row_vals)
-                if any(c for c in row_vals if c):  # skip fully empty rows
+                if any(c for c in row_vals if c):
                     parts.append(row_text)
         return "\n".join(parts)
     except Exception as e: return f"[Excel error: {e}]"
@@ -794,7 +919,7 @@ def extract_file(uf):
     return raw.decode("utf-8",errors="replace")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RENDER HELPERS
+# RENDER HELPERS  (DD analysis view)
 # ─────────────────────────────────────────────────────────────────────────────
 def render_banner(data):
     label=data.get("health_label","Moderate"); score=data.get("health_score",5)
@@ -854,25 +979,51 @@ def render_card(title, section, accent="#4F8EF7"):
         st.markdown(f"<div style='color:#C8D0E8;font-size:0.84rem;padding:0.3rem 0 0.3rem 1.1rem;border-left:2px solid rgba(255,255,255,0.06);margin-bottom:0.3rem;'>{pt}</div>", unsafe_allow_html=True)
     st.markdown("")
 
-def render_full_analysis(data, kp="main", allow_save=True):
+def render_ai_flags(data, source="dd"):
+    """Render legal flags, financial inconsistencies, missing info for DD."""
+    legal  = data.get("legal_flags", [])
+    fincon = data.get("financial_inconsistencies", [])
+    missing= data.get("missing_information", [])
+    if not any([legal, fincon, missing]):
+        return
+    slabel("AI FLAGS & ALERTS", "#FF5C6A")
+    fl1, fl2, fl3 = st.columns(3, gap="large")
+    with fl1:
+        st.markdown("<div style='color:#FF5C6A;font-size:0.78rem;font-weight:700;letter-spacing:1px;margin-bottom:0.6rem;'>LEGAL RISKS</div>", unsafe_allow_html=True)
+        for f in legal:
+            st.markdown(f"<div style='background:rgba(255,92,106,0.06);border:1px solid rgba(255,92,106,0.2);border-radius:8px;padding:0.7rem 0.9rem;margin-bottom:0.5rem;color:#C8D0E8;font-size:0.83rem;line-height:1.5;'>{f}</div>", unsafe_allow_html=True)
+        if not legal:
+            st.markdown("<div style='color:#4A5578;font-size:0.83rem;'>None identified.</div>", unsafe_allow_html=True)
+    with fl2:
+        st.markdown("<div style='color:#F5A623;font-size:0.78rem;font-weight:700;letter-spacing:1px;margin-bottom:0.6rem;'>FINANCIAL INCONSISTENCIES</div>", unsafe_allow_html=True)
+        for f in fincon:
+            st.markdown(f"<div style='background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:8px;padding:0.7rem 0.9rem;margin-bottom:0.5rem;color:#C8D0E8;font-size:0.83rem;line-height:1.5;'>{f}</div>", unsafe_allow_html=True)
+        if not fincon:
+            st.markdown("<div style='color:#4A5578;font-size:0.83rem;'>None identified.</div>", unsafe_allow_html=True)
+    with fl3:
+        st.markdown("<div style='color:#9B6DFF;font-size:0.78rem;font-weight:700;letter-spacing:1px;margin-bottom:0.6rem;'>MISSING INFORMATION</div>", unsafe_allow_html=True)
+        for f in missing:
+            st.markdown(f"<div style='background:rgba(155,109,255,0.06);border:1px solid rgba(155,109,255,0.2);border-radius:8px;padding:0.7rem 0.9rem;margin-bottom:0.5rem;color:#C8D0E8;font-size:0.83rem;line-height:1.5;'>{f}</div>", unsafe_allow_html=True)
+        if not missing:
+            st.markdown("<div style='color:#4A5578;font-size:0.83rem;'>None identified.</div>", unsafe_allow_html=True)
+
+def render_full_analysis(data, kp="main", allow_save=True, deal_id=""):
     render_banner(data)
     render_kpis(data.get("kpis",{}))
     D()
+    # AI Flags (DD-specific)
+    if data.get("legal_flags") or data.get("financial_inconsistencies") or data.get("missing_information"):
+        render_ai_flags(data)
+        D()
     slabel("PERFORMANCE SUMMARY")
     c1,c2,c3=st.columns(3,gap="large")
-    with c1:
-        render_card("Profitability",   data.get("profitability",{}),   "#4F8EF7")
-    with c2:
-        render_card("Cash Health",     data.get("cash_health",{}),     "#00D4AA")
-    with c3:
-        render_card("Revenue Growth",  data.get("revenue_growth",{}),  "#9B6DFF")
+    with c1: render_card("Profitability",   data.get("profitability",{}),   "#4F8EF7")
+    with c2: render_card("Cash Health",     data.get("cash_health",{}),     "#00D4AA")
+    with c3: render_card("Revenue Growth",  data.get("revenue_growth",{}),  "#9B6DFF")
     c4,c5,c6=st.columns(3,gap="large")
-    with c4:
-        render_card("Working Capital", data.get("working_capital_analysis",{}), "#F5A623")
-    with c5:
-        render_card("Balance Sheet",   data.get("balance_sheet",{}),   "#FF5C6A")
-    with c6:
-        render_card("Debt & Leverage", data.get("debt_leverage",{}),   "#00D4AA")
+    with c4: render_card("Working Capital", data.get("working_capital_analysis",{}), "#F5A623")
+    with c5: render_card("Balance Sheet",   data.get("balance_sheet",{}),   "#FF5C6A")
+    with c6: render_card("Debt & Leverage", data.get("debt_leverage",{}),   "#00D4AA")
     D()
     slabel("INVESTOR VIEW")
     st.markdown(f"""
@@ -917,20 +1068,16 @@ def render_full_analysis(data, kp="main", allow_save=True):
     with sa1:
         if st.session_state.logged_in and st.session_state.user_id:
             if st.button("Save Analysis", key=f"save_{kp}", use_container_width=True):
-                db_save_analysis(st.session_state.user_id, data)
+                db_save_analysis(st.session_state.user_id, data, deal_id=deal_id)
                 st.success("Saved to your dashboard.")
         else:
             if st.button("Log In to Save", key=f"save_l_{kp}", use_container_width=True):
                 st.session_state.page="account"; st.rerun()
     with sa2:
-        if st.session_state.logged_in and st.session_state.is_pro and st.session_state.user_id:
+        if st.session_state.logged_in and st.session_state.user_id:
             if st.button("Create Share Link", key=f"share_{kp}", use_container_width=True):
                 sid=db_create_share(st.session_state.user_id, data)
                 st.session_state.share_id_display=sid; st.rerun()
-        elif st.session_state.logged_in and not st.session_state.is_pro:
-            st.markdown("<div style='background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:0.55rem;text-align:center;color:#4A5578;font-size:0.82rem;'>Share — Pro only</div>",unsafe_allow_html=True)
-            if st.button("Upgrade to Pro", key=f"share_up_{kp}", use_container_width=True):
-                st.session_state.page="pricing"; st.rerun()
         else:
             if st.button("Log In to Share", key=f"share_l_{kp}", use_container_width=True):
                 st.session_state.page="account"; st.rerun()
@@ -948,60 +1095,201 @@ def render_full_analysis(data, kp="main", allow_save=True):
                     border-radius:10px;padding:1rem 1.4rem;margin-top:0.5rem;">
           <div style="color:#00D4AA;font-weight:600;font-size:0.88rem;margin-bottom:0.3rem;">Share link created</div>
           <div style="color:#C8D0E8;font-size:0.9rem;">Share ID: <b style="font-size:1.1rem;letter-spacing:3px;">{sid}</b></div>
-          <div style="color:#8B9BC8;font-size:0.8rem;margin-top:0.3rem;">Go to "Shared" in the nav bar and enter this ID. Requires a Pro account to view.</div>
+          <div style="color:#8B9BC8;font-size:0.8rem;margin-top:0.3rem;">Go to "Shared" in the nav bar and enter this ID.</div>
         </div>""", unsafe_allow_html=True)
 
     D()
     slabel("DOWNLOAD REPORT")
-    if not st.session_state.logged_in:
-        st.markdown("""
-        <div style="background:linear-gradient(135deg,rgba(79,142,247,0.08),rgba(0,212,170,0.05));
-                    border:1px solid rgba(79,142,247,0.2);border-radius:14px;padding:1.5rem 2rem;text-align:center;">
-          <div style="color:#F0F4FF;font-size:1rem;font-weight:700;margin-bottom:0.4rem;">Log in to download your report</div>
-          <div style="color:#8B9BC8;font-size:0.88rem;">Free accounts: TXT only. Pro: PDF, Excel, and Word.</div>
+    slug=re.sub(r"[^a-z0-9]","_",data.get("company_name","report").lower())
+    d1,d2,d3,d4=st.columns(4)
+    with d1:
+        st.download_button("Download (.txt)",build_txt(data),f"{slug}.txt","text/plain",use_container_width=True)
+    with d2:
+        if PDF_OK:
+            st.download_button("Download (.pdf)",build_pdf(data),f"{slug}.pdf","application/pdf",use_container_width=True)
+        else:
+            st.caption("PDF library not installed")
+    with d3:
+        if EXCEL_OK:
+            st.download_button("Download (.xlsx)",build_excel(data),f"{slug}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
+        else:
+            st.caption("Excel library not installed")
+    with d4:
+        if DOCX_OK:
+            st.download_button("Download (.docx)",build_docx(data),f"{slug}.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",use_container_width=True)
+        else:
+            st.caption("Word library not installed")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RENDER SCREENING RESULT CARD
+# ─────────────────────────────────────────────────────────────────────────────
+def render_screening_result(sc_data, deal=None, api_key=""):
+    score       = sc_data.get("investment_score", 0)
+    label       = sc_data.get("score_label", "Borderline")
+    rec         = sc_data.get("recommendation", "Pass")
+    rationale   = sc_data.get("recommendation_rationale", "")
+    summary     = sc_data.get("summary", "")
+    deal_name   = sc_data.get("deal_name", "")
+    industry    = sc_data.get("industry", "")
+    iv          = sc_data.get("investor_view", "")
+    km          = sc_data.get("key_metrics", {})
+
+    score_col = {"Strong":"#00D4AA","Promising":"#4F8EF7","Borderline":"#F5A623","Pass":"#FF5C6A"}.get(label,"#F5A623")
+    rec_col   = "#00D4AA" if rec == "Proceed" else "#FF5C6A"
+    rec_bg    = "rgba(0,212,170,0.07)" if rec == "Proceed" else "rgba(255,92,106,0.07)"
+    rec_bor   = "rgba(0,212,170,0.25)" if rec == "Proceed" else "rgba(255,92,106,0.25)"
+
+    st.markdown(f"""
+    <div style="background:rgba(15,22,32,0.9);border:1px solid rgba(255,255,255,0.08);border-radius:16px;
+                padding:2rem 2.4rem;margin-bottom:1.5rem;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;">
+        <div>
+          <div style="color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;">DEAL SCREENING RESULT</div>
+          <div style="font-size:1.6rem;font-weight:800;color:#F0F4FF;margin:0.3rem 0;">{deal_name}</div>
+          <div style="color:#8B9BC8;font-size:0.85rem;">{industry}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;margin-bottom:0.3rem;">INVESTMENT SCORE</div>
+          <div style="font-size:3rem;font-weight:900;color:{score_col};line-height:1;">{score}<span style="font-size:1rem;color:#4A5578;">/100</span></div>
+          <div style="color:{score_col};font-size:0.85rem;font-weight:600;">{label}</div>
+        </div>
+      </div>
+      <div style="margin-top:1.2rem;padding-top:1.2rem;border-top:1px solid rgba(255,255,255,0.06);
+                  color:#C8D0E8;font-size:0.93rem;line-height:1.7;">{summary}</div>
+    </div>""", unsafe_allow_html=True)
+
+    # Recommendation box
+    st.markdown(f"""
+    <div style="background:{rec_bg};border:1px solid {rec_bor};border-radius:14px;
+                padding:1.4rem 1.8rem;margin-bottom:1.5rem;display:flex;align-items:center;gap:2rem;flex-wrap:wrap;">
+      <div>
+        <div style="color:{rec_col};font-size:0.72rem;font-weight:700;letter-spacing:2px;margin-bottom:0.3rem;">AI RECOMMENDATION</div>
+        <div style="font-size:2.2rem;font-weight:900;color:{rec_col};">{rec}</div>
+      </div>
+      <div style="color:#C8D0E8;font-size:0.9rem;line-height:1.6;flex:1;">{rationale}</div>
+    </div>""", unsafe_allow_html=True)
+
+    # Key metrics
+    if any(v and v != "Not provided" for v in km.values()):
+        slabel("KEY METRICS FROM DOCUMENTS")
+        m_cols = st.columns(5)
+        for col,(k,lbl) in zip(m_cols,[("revenue","Revenue"),("growth_rate","Growth Rate"),
+                                       ("gross_margin","Gross Margin"),("burn_rate","Burn Rate"),("runway","Runway")]):
+            with col:
+                st.metric(label=lbl, value=km.get(k,"Not provided"))
+
+    D()
+    r1, r2 = st.columns(2, gap="large")
+    with r1:
+        slabel("KEY RISKS", "#FF5C6A")
+        for risk in sc_data.get("key_risks",[]):
+            with st.expander(risk.get("title","Risk")):
+                st.markdown(f"{risk.get('detail','')}")
+    with r2:
+        slabel("STRENGTHS", "#00D4AA")
+        for s in sc_data.get("strengths",[]):
+            st.markdown(f"""
+            <div style="background:rgba(0,212,170,0.06);border:1px solid rgba(0,212,170,0.2);
+                        border-radius:10px;padding:0.9rem 1.1rem;margin-bottom:0.6rem;">
+              <div style="color:#00D4AA;font-weight:600;font-size:0.87rem;margin-bottom:0.2rem;">{s.get('title','')}</div>
+              <div style="color:#8B9BC8;font-size:0.82rem;">{s.get('detail','')}</div>
+            </div>""", unsafe_allow_html=True)
+
+    D()
+    slabel("INVESTOR VIEW")
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,rgba(79,142,247,0.06),rgba(155,109,255,0.06));
+                border:1px solid rgba(79,142,247,0.2);border-radius:14px;
+                padding:1.4rem 1.8rem;color:#C8D0E8;font-size:0.93rem;line-height:1.75;
+                border-left:3px solid #4F8EF7;">{iv}</div>""", unsafe_allow_html=True)
+
+    # Red flags
+    red_flags = sc_data.get("red_flags", [])
+    if red_flags:
+        D()
+        slabel("RED FLAGS", "#FF5C6A")
+        for f in red_flags:
+            st.markdown(f"""
+            <div style="background:rgba(255,92,106,0.06);border:1px solid rgba(255,92,106,0.2);
+                        border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.5rem;
+                        color:#C8D0E8;font-size:0.85rem;">⚠ {f}</div>""", unsafe_allow_html=True)
+
+    D()
+    # Convert to DD button
+    if st.session_state.logged_in and deal:
+        status = deal.get("status","screening")
+        if status == "screening":
+            conv_col, _ = st.columns([1.5,2])
+            with conv_col:
+                if st.button("⟶  Convert to Due Diligence Project", key="convert_to_dd_btn", use_container_width=True):
+                    db_promote_to_dd(deal["id"])
+                    st.session_state.active_deal_id = deal["id"]
+                    st.session_state.page = "dd"
+                    st.rerun()
+        else:
+            st.markdown(f"""
+            <div style="background:rgba(79,142,247,0.07);border:1px solid rgba(79,142,247,0.2);
+                        border-radius:10px;padding:0.8rem 1.2rem;display:inline-flex;align-items:center;gap:0.7rem;">
+              <span style="color:#4F8EF7;font-size:0.88rem;">✓ Already moved to Due Diligence</span>
+            </div>""", unsafe_allow_html=True)
+            if st.button("Open Due Diligence →", key="go_to_dd_btn"):
+                st.session_state.active_deal_id = deal["id"]
+                st.session_state.page = "dd"
+                st.rerun()
+    elif not st.session_state.logged_in:
+        st.info("Log in to save this screening and convert it to a Due Diligence project.")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RISK TRACKER (shared between Screening results and DD)
+# ─────────────────────────────────────────────────────────────────────────────
+def render_risk_tracker(deal, dd_data=None):
+    """Show risks from screening + any DD-identified risks, with note inputs per risk."""
+    slabel("RISK TRACKER", "#F5A623")
+    sc = deal.get("screening_data", {})
+    screen_risks = [r.get("title","") for r in sc.get("key_risks",[])]
+    dd_risks     = [r.get("title","") for r in (dd_data or {}).get("risks",[])] if dd_data else []
+    # Merge, deduplicate
+    all_risks = list(dict.fromkeys(screen_risks + dd_risks))
+
+    if not all_risks:
+        st.markdown("<div style='color:#4A5578;font-size:0.88rem;'>No risks identified yet. Run screening or a DD analysis first.</div>", unsafe_allow_html=True)
+        return
+
+    notes = deal.get("risk_notes", {})
+    updated = False
+    for risk_title in all_risks:
+        source_tag = ""
+        if risk_title in screen_risks and risk_title in dd_risks:
+            source_tag = "<span style='background:rgba(155,109,255,0.15);color:#9B6DFF;font-size:0.68rem;padding:0.15rem 0.5rem;border-radius:4px;margin-left:0.5rem;'>Screening + DD</span>"
+        elif risk_title in screen_risks:
+            source_tag = "<span style='background:rgba(245,166,35,0.15);color:#F5A623;font-size:0.68rem;padding:0.15rem 0.5rem;border-radius:4px;margin-left:0.5rem;'>Screening</span>"
+        else:
+            source_tag = "<span style='background:rgba(79,142,247,0.15);color:#4F8EF7;font-size:0.68rem;padding:0.15rem 0.5rem;border-radius:4px;margin-left:0.5rem;'>DD</span>"
+
+        st.markdown(f"""
+        <div style="background:rgba(15,22,32,0.9);border:1px solid rgba(255,255,255,0.07);
+                    border-radius:10px;padding:0.9rem 1.2rem;margin-bottom:0.5rem;">
+          <div style="color:#F0F4FF;font-size:0.88rem;font-weight:600;margin-bottom:0.4rem;">
+            {risk_title}{source_tag}
+          </div>
         </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-        dl1,dl2=st.columns(2)
-        with dl1:
-            if st.button("Log In to Download",key=f"dlogin_{kp}",use_container_width=True):
-                st.session_state.page="account"; st.rerun()
-        with dl2:
-            if st.button("Create Free Account",key=f"dsignup_{kp}",use_container_width=True):
-                st.session_state.auth_tab="signup"; st.session_state.page="account"; st.rerun()
-    else:
-        slug=re.sub(r"[^a-z0-9]","_",data.get("company_name","report").lower())
-        d1,d2,d3,d4=st.columns(4)
-        with d1:
-            st.download_button("Download (.txt)",build_txt(data),f"{slug}.txt","text/plain",use_container_width=True)
-        with d2:
-            if st.session_state.is_pro and PDF_OK:
-                st.download_button("Download (.pdf)",build_pdf(data),f"{slug}.pdf","application/pdf",use_container_width=True)
-            else:
-                st.markdown("<div style='background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:0.55rem;text-align:center;color:#4A5578;font-size:0.82rem;'>PDF — Pro only</div>",unsafe_allow_html=True)
-                if not st.session_state.is_pro:
-                    if st.button("Upgrade",key=f"uppdf_{kp}",use_container_width=True):
-                        st.session_state.page="pricing"; st.rerun()
-        with d3:
-            if st.session_state.is_pro and EXCEL_OK:
-                st.download_button("Download (.xlsx)",build_excel(data),f"{slug}.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
-            else:
-                st.markdown("<div style='background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:0.55rem;text-align:center;color:#4A5578;font-size:0.82rem;'>Excel — Pro only</div>",unsafe_allow_html=True)
-                if not st.session_state.is_pro:
-                    if st.button("Upgrade",key=f"upxl_{kp}",use_container_width=True):
-                        st.session_state.page="pricing"; st.rerun()
-        with d4:
-            if st.session_state.is_pro and DOCX_OK:
-                st.download_button("Download (.docx)",build_docx(data),f"{slug}.docx",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",use_container_width=True)
-            else:
-                st.markdown("<div style='background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:0.55rem;text-align:center;color:#4A5578;font-size:0.82rem;'>Word — Pro only</div>",unsafe_allow_html=True)
-                if not st.session_state.is_pro:
-                    if st.button("Upgrade",key=f"upwrd_{kp}",use_container_width=True):
-                        st.session_state.page="pricing"; st.rerun()
+        note_key = f"note_{deal['id']}_{risk_title[:30].replace(' ','_')}"
+        existing_note = notes.get(risk_title, "")
+        new_note = st.text_area("Analyst note", value=existing_note, key=note_key,
+                                placeholder="Add your notes, context, or follow-up actions...",
+                                label_visibility="collapsed", height=68)
+        if new_note != existing_note:
+            notes[risk_title] = new_note
+            updated = True
+
+    if updated and st.session_state.logged_in:
+        db_save_risk_notes(deal["id"], notes)
+        st.success("Notes saved.")
 
 # ═════════════════════════════════════════════════════════════════════════════
-# ACCOUNT PAGE  (merged Log In + Sign Up)
+# ACCOUNT PAGE
 # ═════════════════════════════════════════════════════════════════════════════
 if st.session_state.page in ("login","signup","account"):
     if st.session_state.page == "signup":
@@ -1040,8 +1328,8 @@ if st.session_state.page in ("login","signup","account"):
                     res=db_login_user(email,password)
                     if res["ok"]:
                         st.session_state.logged_in=True; st.session_state.user_email=res["email"]
-                        st.session_state.user_id=res["user_id"]; st.session_state.is_pro=res["is_pro"]
-                        st.session_state.page="analyser"; st.rerun()
+                        st.session_state.user_id=res["user_id"]
+                        st.session_state.page="dashboard"; st.rerun()
                     else: st.error(res["error"])
                 else: st.error("Please enter your email and password.")
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
@@ -1050,203 +1338,511 @@ if st.session_state.page in ("login","signup","account"):
             email=st.text_input("Email address",placeholder="you@example.com",key="su_email")
             pw=st.text_input("Password",type="password",placeholder="Choose a password",key="su_pw")
             confirm=st.text_input("Confirm password",type="password",placeholder="Repeat password",key="su_cp")
-            plan=st.radio("Plan",["Free — 5 analyses/month","Pro — $10/month (unlimited)"],key="su_plan")
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
             if st.button("Create Account",key="signup_submit",use_container_width=True):
                 if not email or not pw: st.error("Please fill in all fields.")
                 elif pw!=confirm: st.error("Passwords do not match.")
                 else:
-                    is_pro="Pro" in plan
-                    res=db_create_user(email,pw,is_pro=is_pro)
+                    res=db_create_user(email,pw)
                     if res["ok"]:
                         st.session_state.logged_in=True; st.session_state.user_email=res["email"]
-                        st.session_state.user_id=res["user_id"]; st.session_state.is_pro=res["is_pro"]
-                        st.session_state.page="analyser"; st.rerun()
+                        st.session_state.user_id=res["user_id"]
+                        st.session_state.page="dashboard"; st.rerun()
                     else: st.error(res["error"])
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
             st.markdown("<div style='text-align:center;color:#4A5578;font-size:0.83rem;'>Already have an account? Switch to Log In above.</div>", unsafe_allow_html=True)
-            if "Pro" in plan:
-                st.markdown("""
-                <div style="background:rgba(79,142,247,0.08);border:1px solid rgba(79,142,247,0.25);
-                            border-radius:10px;padding:1rem;margin-top:1rem;text-align:center;">
-                  <div style="color:#4F8EF7;font-size:0.85rem;font-weight:600;margin-bottom:0.25rem;">Pro Plan — $10/month</div>
-                  <div style="color:#8B9BC8;font-size:0.82rem;">Payments coming soon. Pro access activated at launch.</div>
-                </div>""", unsafe_allow_html=True)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# ANALYSER PAGE
-# ═════════════════════════════════════════════════════════════════════════════
-elif st.session_state.page == "analyser":
-    st.markdown("""
-    <div style="text-align:center;padding:2.5rem 1rem 2rem;position:relative;">
-      <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:600px;height:200px;
-                  background:radial-gradient(ellipse,rgba(79,142,247,0.12),transparent 70%);pointer-events:none;"></div>
-      <div style="position:relative;">
-        <div style="display:inline-block;margin-bottom:1rem;">
-          <span style="background:linear-gradient(135deg,rgba(79,142,247,0.15),rgba(0,212,170,0.15));color:#4F8EF7;
-                       border:1px solid rgba(79,142,247,0.3);border-radius:20px;padding:0.3rem 1rem;
-                       font-size:0.72rem;font-weight:700;letter-spacing:1.5px;">
-            AI-POWERED · INSTITUTIONAL GRADE · FREE TO START</span></div>
-        <h1 style="font-size:2.8rem;font-weight:900;line-height:1.1;letter-spacing:-1px;margin:0 0 1rem;">
-          <span style="color:#F0F4FF;">Financial Analysis</span><br>
-          <span style="background:linear-gradient(135deg,#4F8EF7,#00D4AA);-webkit-background-clip:text;
-                       -webkit-text-fill-color:transparent;background-clip:text;">in seconds, not hours.</span></h1>
-        <p style="color:#8B9BC8;font-size:1.05rem;max-width:560px;margin:0 auto;line-height:1.7;">
-          Upload your Income Statement, Balance Sheet, and Cash Flow Statement.
-          Get a complete forensic analysis.</p>
-      </div>
-    </div>""", unsafe_allow_html=True)
 
     if st.session_state.logged_in:
-        bc="#00D4AA" if st.session_state.is_pro else "#8B9BC8"
-        bl="PRO PLAN" if st.session_state.is_pro else "FREE PLAN"
-        st.markdown(f"<div style='text-align:center;margin-bottom:1rem;'><span style='background:rgba(0,212,170,0.1);color:{bc};border:1px solid {bc}33;font-size:0.68rem;font-weight:700;letter-spacing:1.5px;padding:0.2rem 0.8rem;border-radius:20px;'>{bl}</span></div>",unsafe_allow_html=True)
-
-    api_key=os.getenv("GROQ_API_KEY","")
-    if not api_key:
-        with st.expander("Enter Groq API Key  —  free at console.groq.com"):
-            api_key=st.text_input("Key",type="password",placeholder="gsk_...",label_visibility="collapsed")
-            st.caption("Get your free key at [console.groq.com](https://console.groq.com) → API Keys → Create Key")
-        if not api_key: st.info("Enter your Groq API key above to get started.")
-
-    D()
-    cl,cr=st.columns(2,gap="large")
-    with cl:
-        st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Upload Financial Statements <span style='color:#4A5578;font-size:0.8rem;'>— PDF, CSV, Excel or Word</span></div>",unsafe_allow_html=True)
-        st.caption("Upload all three statements at once for the best results")
-        uploaded_files=st.file_uploader("files",type=["pdf","csv","xlsx","xls","xlsm","docx","txt"],accept_multiple_files=True,label_visibility="collapsed")
-        if uploaded_files:
-            for f in uploaded_files:
-                kb=len(f.getvalue())/1024
-                color = "#FF5C6A" if kb > 2000 else "#4F8EF7"
-                st.markdown(f"<div style='display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0.6rem;background:rgba(79,142,247,0.06);border:1px solid rgba(79,142,247,0.15);border-radius:6px;margin-top:0.3rem;'><span style='color:{color};font-size:0.75rem;'>DOC</span><span style='color:#C8D0E8;font-size:0.82rem;'>{f.name}</span><span style='color:#4A5578;font-size:0.75rem;margin-left:auto;'>{kb:.1f} KB</span></div>",unsafe_allow_html=True)
-            total_kb = sum(len(f.getvalue())/1024 for f in uploaded_files)
-            if total_kb > 2000:
-                st.warning(f"Large file detected ({total_kb:.0f} KB). The app will extract and compress the key financial data automatically. For best results, upload just the financial statement pages rather than full annual reports.")
-    with cr:
-        st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Or Paste Financial Data <span style='color:#4A5578;font-size:0.8rem;'>— any format</span></div>",unsafe_allow_html=True)
-        st.caption("Paste raw text, CSV rows, or numbers directly")
-        pasted=st.text_area("paste",height=155,placeholder="Revenue: $10.5M\nNet Profit: $1.8M\n...",label_visibility="collapsed")
-
-    D()
-    _,bc_col,_=st.columns([1,2,1])
-    with bc_col:
-        go=st.button("Analyse Financial Statements",key="analyse_btn",use_container_width=True)
-
-    st.markdown("""
-    <div style="display:flex;justify-content:center;gap:3rem;padding:1rem 0 0.5rem;">
-      <div style="text-align:center;"><div style="color:#F0F4FF;font-size:1.1rem;font-weight:700;">30s</div><div style="color:#4A5578;font-size:0.72rem;letter-spacing:0.5px;">AVG ANALYSIS TIME</div></div>
-      <div style="text-align:center;"><div style="color:#F0F4FF;font-size:1.1rem;font-weight:700;">10+</div><div style="color:#4A5578;font-size:0.72rem;letter-spacing:0.5px;">KEY METRICS</div></div>
-      <div style="text-align:center;"><div style="color:#F0F4FF;font-size:1.1rem;font-weight:700;">3</div><div style="color:#4A5578;font-size:0.72rem;letter-spacing:0.5px;">STATEMENTS CROSS-REF'D</div></div>
-      <div style="text-align:center;"><div style="color:#F0F4FF;font-size:1.1rem;font-weight:700;">Free</div><div style="color:#4A5578;font-size:0.72rem;letter-spacing:0.5px;">TO GET STARTED</div></div>
-    </div>""", unsafe_allow_html=True)
-
-    if go:
-        if not api_key: st.error("Please enter your Groq API key."); st.stop()
-        parts=[]
-        if uploaded_files:
-            for uf in uploaded_files: uf.seek(0); parts.append(f"=== DOCUMENT: {uf.name} ===\n{extract_file(uf)}")
-        if pasted.strip(): parts.append(f"=== PASTED DATA ===\n{pasted.strip()}")
-        if not parts: st.warning("Please upload a file or paste financial data."); st.stop()
-        with st.spinner(f"Analysing {len(parts)} document(s) with DiligenceAI..."):
-            try: data,raw=call_groq("\n\n".join(parts),api_key)
-            except Exception as e:
-                err=str(e).lower()
-                if "401" in err or "invalid api key" in err:
-                    st.error("Invalid Groq API key. Check it at console.groq.com.")
-                elif "429" in err or "rate_limit" in err or "rate limit" in err:
-                    st.error("Groq rate limit reached. Wait 60 seconds and try again, or upgrade your Groq account at console.groq.com/settings/billing for higher limits.")
-                elif "413" in err or "too large" in err:
-                    st.error("Document too large even after compression. Try uploading just the key pages (income statement, balance sheet, cash flow) rather than the full document.")
-                else:
-                    st.error(f"API error: {e}")
-                st.stop()
-        if not data: st.warning("Could not parse output."); st.text(raw); st.stop()
-        st.session_state.analysis_data=data
-        # Auto-generate share ID for Pro users on analyse
-        if st.session_state.logged_in and st.session_state.is_pro and st.session_state.user_id:
-            auto_sid=db_create_share(st.session_state.user_id, data)
-            st.session_state.share_id_display=auto_sid
-        st.markdown("""
-        <div style="background:rgba(0,212,170,0.08);border:1px solid rgba(0,212,170,0.25);border-radius:10px;
-                    padding:0.8rem 1.2rem;margin:1rem 0;display:flex;align-items:center;gap:0.7rem;">
-          <span style="color:#00D4AA;font-size:1rem;">✓</span>
-          <span style="color:#00D4AA;font-size:0.9rem;font-weight:600;">Analysis complete</span>
-        </div>""", unsafe_allow_html=True)
+        st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
         D()
-        render_full_analysis(data, kp="main", allow_save=True)
-
-    D()
-    st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; Powered by Groq (LLaMA 3.3 70B) &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
+        _,lc,_ = st.columns([1,1.5,1])
+        with lc:
+            if st.button("Log Out", key="logout_btn", use_container_width=True):
+                for k,v in DEFAULTS.items(): st.session_state[k]=v
+                st.rerun()
 
 # ═════════════════════════════════════════════════════════════════════════════
 # DASHBOARD PAGE
 # ═════════════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "dashboard":
-    if not st.session_state.logged_in:
-        st.warning("Please log in to view your dashboard.")
-        if st.button("Log In / Sign Up",key="dash_login"): st.session_state.page="account"; st.rerun()
-        st.stop()
-
     st.markdown("""
     <div style="padding:2rem 0 1.5rem;">
-      <div style="color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;margin-bottom:0.4rem;">MY ACCOUNT</div>
+      <div style="color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;margin-bottom:0.4rem;">DEAL ANALYSIS PLATFORM</div>
       <h1 style="font-size:2rem;font-weight:800;color:#F0F4FF;margin:0 0 0.3rem;">Dashboard</h1>
-      <p style="color:#8B9BC8;font-size:0.95rem;margin:0;">Your saved analyses and comparison tools.</p>
+      <p style="color:#8B9BC8;font-size:0.95rem;margin:0;">Screen opportunities, track deals, and run deep diligence from one place.</p>
     </div>""", unsafe_allow_html=True)
 
-    analyses=db_get_analyses(st.session_state.user_id)
     D()
-    slabel("SAVED ANALYSES")
-
-    if not analyses:
+    # CTA panels
+    cta1, cta2 = st.columns(2, gap="large")
+    with cta1:
         st.markdown("""
-        <div style="background:#0F1620;border:1px solid rgba(255,255,255,0.07);border-radius:12px;
-                    padding:2.5rem;text-align:center;">
-          <div style="color:#8B9BC8;font-size:0.95rem;">No saved analyses yet. Run an analysis on the Analyser page and click "Save Analysis".</div>
+        <div style="background:linear-gradient(135deg,rgba(79,142,247,0.1),rgba(0,212,170,0.06));
+                    border:1px solid rgba(79,142,247,0.25);border-radius:14px;padding:1.8rem 2rem;">
+          <div style="color:#4F8EF7;font-size:0.72rem;font-weight:700;letter-spacing:1.5px;margin-bottom:0.5rem;">FEATURE 1</div>
+          <div style="font-size:1.2rem;font-weight:700;color:#F0F4FF;margin-bottom:0.5rem;">Deal Screening</div>
+          <div style="color:#8B9BC8;font-size:0.88rem;line-height:1.6;">Upload a pitch deck or CIM. AI generates an investment score, risks, strengths, and a Proceed / Pass recommendation in seconds.</div>
         </div>""", unsafe_allow_html=True)
-    else:
-        for a in analyses:
-            km=a.get("key_metrics",{}); bg,fg,border=hcolours(a.get("health_label","Moderate"))
-            rev=km.get("revenue","N/A"); ebitda=km.get("ebitda","N/A")
-            chk_col,card_col,act_col=st.columns([0.3,5,1.5])
-            with chk_col:
-                checked=a["id"] in st.session_state.compare_ids
-                if st.checkbox("",value=checked,key=f"cmp_{a['id']}"):
-                    if a["id"] not in st.session_state.compare_ids and len(st.session_state.compare_ids)<3:
-                        st.session_state.compare_ids.append(a["id"])
-                else:
-                    if a["id"] in st.session_state.compare_ids:
-                        st.session_state.compare_ids.remove(a["id"])
-            with card_col:
-                st.markdown(f"""
-                <div style="background:{bg};border:1px solid {border};border-radius:12px;padding:1rem 1.4rem;margin-bottom:0.4rem;">
-                  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
-                    <div>
-                      <div style="color:#F0F4FF;font-size:0.97rem;font-weight:700;">{a.get("company_name","Unknown")}</div>
-                      <div style="color:#8B9BC8;font-size:0.8rem;">{a.get("period","")} &nbsp;·&nbsp; {a.get("date_created","")[:10]}</div>
-                    </div>
-                    <div style="display:flex;gap:1.5rem;">
-                      <div style="text-align:center;"><div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">REVENUE</div><div style="color:{fg};font-weight:700;font-size:0.95rem;">{rev}</div></div>
-                      <div style="text-align:center;"><div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">EBITDA</div><div style="color:{fg};font-weight:700;font-size:0.95rem;">{ebitda}</div></div>
-                      <div style="text-align:center;"><div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">HEALTH</div><div style="color:{fg};font-weight:700;font-size:0.95rem;">{a.get("health_label","—")} {a.get("health_score","—")}/10</div></div>
-                    </div>
-                  </div>
-                </div>""", unsafe_allow_html=True)
-            with act_col:
-                if st.button("View",key=f"view_{a['id']}",use_container_width=True):
-                    st.session_state.loaded_analysis=a["raw_output"]
-                    st.session_state.page="view_analysis"; st.rerun()
-                if st.button("Delete",key=f"del_{a['id']}",use_container_width=True):
-                    db_delete_analysis(a["id"],st.session_state.user_id); st.rerun()
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        if st.button("Start New Deal Screening →", key="dash_to_screen", use_container_width=True):
+            st.session_state.page="screening"; st.rerun()
+
+    with cta2:
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,rgba(155,109,255,0.1),rgba(79,142,247,0.06));
+                    border:1px solid rgba(155,109,255,0.25);border-radius:14px;padding:1.8rem 2rem;">
+          <div style="color:#9B6DFF;font-size:0.72rem;font-weight:700;letter-spacing:1.5px;margin-bottom:0.5rem;">FEATURE 2</div>
+          <div style="font-size:1.2rem;font-weight:700;color:#F0F4FF;margin-bottom:0.5rem;">Due Diligence</div>
+          <div style="color:#8B9BC8;font-size:0.88rem;line-height:1.6;">Run a deep forensic analysis across financial statements. Flag legal risks, inconsistencies, and missing data. Track risks across the full deal lifecycle.</div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        if st.button("Open Due Diligence Projects →", key="dash_to_dd", use_container_width=True):
+            st.session_state.page="dd_select"; st.rerun()
+
+    D()
+
+    if st.session_state.logged_in and st.session_state.user_id:
+        deals = db_get_deals(st.session_state.user_id)
+        slabel("RECENT DEALS")
+        if not deals:
+            st.markdown("""
+            <div style="background:#0F1620;border:1px solid rgba(255,255,255,0.07);border-radius:12px;
+                        padding:2rem;text-align:center;">
+              <div style="color:#8B9BC8;font-size:0.95rem;">No deals yet. Start with Deal Screening above.</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            for deal in deals[:8]:
+                sc_data   = deal.get("screening_data", {})
+                d_status  = deal.get("status","screening")
+                sc_label  = sc_data.get("score_label","—")
+                inv_score = sc_data.get("investment_score","—")
+                sc_col    = status_colour(d_status)
+
+                card_col, act_col = st.columns([5, 1.4])
+                with card_col:
+                    st.markdown(f"""
+                    <div style="background:#0F1620;border:1px solid rgba(255,255,255,0.07);border-radius:12px;
+                                padding:1rem 1.4rem;margin-bottom:0.4rem;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                        <div>
+                          <div style="color:#F0F4FF;font-size:0.97rem;font-weight:700;">{deal.get('name','Unnamed')}</div>
+                          <div style="color:#8B9BC8;font-size:0.8rem;margin-top:0.15rem;">{deal.get('industry','') or 'No industry set'} &nbsp;·&nbsp; Updated {deal.get('updated_at','')[:10]}</div>
+                        </div>
+                        <div style="display:flex;gap:1.5rem;align-items:center;">
+                          <div style="text-align:center;">
+                            <div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">STATUS</div>
+                            <div style="color:{sc_col};font-weight:700;font-size:0.88rem;">{status_label(d_status)}</div>
+                          </div>
+                          <div style="text-align:center;">
+                            <div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">SCORE</div>
+                            <div style="color:#4F8EF7;font-weight:700;font-size:0.88rem;">{inv_score}/100</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+                with act_col:
+                    st.markdown("<div style='height:0.2rem'></div>", unsafe_allow_html=True)
+                    if d_status == "screening":
+                        if st.button("Open Screening", key=f"open_sc_{deal['id']}", use_container_width=True):
+                            st.session_state.active_deal_id = deal["id"]
+                            st.session_state.screening_result = sc_data if sc_data else None
+                            st.session_state.page = "screening"
+                            st.rerun()
+                    else:
+                        if st.button("Open DD", key=f"open_dd_{deal['id']}", use_container_width=True):
+                            st.session_state.active_deal_id = deal["id"]
+                            st.session_state.page = "dd"
+                            st.rerun()
+                    if st.button("Delete", key=f"del_deal_{deal['id']}", use_container_width=True):
+                        db_delete_deal(deal["id"], st.session_state.user_id); st.rerun()
 
         D()
-        slabel("COMPARE COMPANIES","#9B6DFF")
-        n_sel=len(st.session_state.compare_ids)
-        st.markdown(f"<div style='color:#8B9BC8;font-size:0.88rem;margin-bottom:0.8rem;'>Tick 2–3 analyses above, then click Compare. ({n_sel} selected)</div>",unsafe_allow_html=True)
-        if n_sel>=2:
-            if st.button(f"Compare {n_sel} Companies",key="compare_btn"):
-                st.session_state.page="compare"; st.rerun()
+        # Saved DD analyses
+        analyses = db_get_analyses(st.session_state.user_id)
+        if analyses:
+            slabel("SAVED DUE DILIGENCE ANALYSES")
+            for a in analyses:
+                km=a.get("key_metrics",{}); bg,fg,border=hcolours(a.get("health_label","Moderate"))
+                rev=km.get("revenue","N/A"); ebitda=km.get("ebitda","N/A")
+                chk_col,card_col,act_col=st.columns([0.3,5,1.5])
+                with chk_col:
+                    checked=a["id"] in st.session_state.compare_ids
+                    if st.checkbox("",value=checked,key=f"cmp_{a['id']}"):
+                        if a["id"] not in st.session_state.compare_ids and len(st.session_state.compare_ids)<3:
+                            st.session_state.compare_ids.append(a["id"])
+                    else:
+                        if a["id"] in st.session_state.compare_ids:
+                            st.session_state.compare_ids.remove(a["id"])
+                with card_col:
+                    st.markdown(f"""
+                    <div style="background:{bg};border:1px solid {border};border-radius:12px;padding:1rem 1.4rem;margin-bottom:0.4rem;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                        <div>
+                          <div style="color:#F0F4FF;font-size:0.97rem;font-weight:700;">{a.get("company_name","Unknown")}</div>
+                          <div style="color:#8B9BC8;font-size:0.8rem;">{a.get("period","")} &nbsp;·&nbsp; {a.get("date_created","")[:10]}</div>
+                        </div>
+                        <div style="display:flex;gap:1.5rem;">
+                          <div style="text-align:center;"><div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">REVENUE</div><div style="color:{fg};font-weight:700;font-size:0.95rem;">{rev}</div></div>
+                          <div style="text-align:center;"><div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">EBITDA</div><div style="color:{fg};font-weight:700;font-size:0.95rem;">{ebitda}</div></div>
+                          <div style="text-align:center;"><div style="color:#8B9BC8;font-size:0.65rem;letter-spacing:1px;">HEALTH</div><div style="color:{fg};font-weight:700;font-size:0.95rem;">{a.get("health_label","—")} {a.get("health_score","—")}/10</div></div>
+                        </div>
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+                with act_col:
+                    if st.button("View",key=f"view_{a['id']}",use_container_width=True):
+                        st.session_state.loaded_analysis=a["raw_output"]
+                        st.session_state.page="view_analysis"; st.rerun()
+                    if st.button("Delete",key=f"del_{a['id']}",use_container_width=True):
+                        db_delete_analysis(a["id"],st.session_state.user_id); st.rerun()
+
+            D()
+            n_sel=len(st.session_state.compare_ids)
+            slabel("COMPARE COMPANIES","#9B6DFF")
+            st.markdown(f"<div style='color:#8B9BC8;font-size:0.88rem;margin-bottom:0.8rem;'>Tick 2–3 analyses above, then click Compare. ({n_sel} selected)</div>",unsafe_allow_html=True)
+            if n_sel >= 2:
+                if st.button(f"Compare {n_sel} Companies", key="compare_btn"):
+                    st.session_state.page="compare"; st.rerun()
+    else:
+        D()
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,rgba(79,142,247,0.08),rgba(0,212,170,0.05));
+                    border:1px solid rgba(79,142,247,0.2);border-radius:14px;padding:2rem;text-align:center;">
+          <div style="color:#F0F4FF;font-size:1rem;font-weight:700;margin-bottom:0.4rem;">Log in to save and track deals</div>
+          <div style="color:#8B9BC8;font-size:0.88rem;margin-bottom:1rem;">Deal Screening works without an account. Log in to save results, track across the lifecycle, and run Due Diligence.</div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        _,lc,_ = st.columns([1,2,1])
+        with lc:
+            if st.button("Log In / Sign Up", key="dash_login", use_container_width=True):
+                st.session_state.page="account"; st.rerun()
+
+    D()
+    st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DEAL SCREENING PAGE
+# ═════════════════════════════════════════════════════════════════════════════
+elif st.session_state.page == "screening":
+    # If we have an active deal with existing screening data, show that result
+    active_deal = None
+    if st.session_state.active_deal_id and st.session_state.logged_in:
+        active_deal = db_get_deal(st.session_state.active_deal_id)
+        if active_deal and active_deal.get("screening_data"):
+            st.session_state.screening_result = active_deal["screening_data"]
+
+    if st.session_state.screening_result:
+        st.markdown("""
+        <div style="padding:1.5rem 0 1rem;">
+          <div style="color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;margin-bottom:0.3rem;">DEAL SCREENING</div>
+          <h1 style="font-size:1.7rem;font-weight:800;color:#F0F4FF;margin:0;">Screening Results</h1>
+        </div>""", unsafe_allow_html=True)
+        if st.button("← New Screening", key="new_screen"):
+            st.session_state.screening_result = None
+            st.session_state.active_deal_id = None
+            st.rerun()
+        D()
+        render_screening_result(
+            st.session_state.screening_result,
+            deal=active_deal,
+            api_key=os.getenv("GROQ_API_KEY","")
+        )
+        D()
+        st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
+        st.stop()
+
+    # ── Upload form ──────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="text-align:center;padding:2rem 1rem 1.5rem;position:relative;">
+      <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:500px;height:160px;
+                  background:radial-gradient(ellipse,rgba(79,142,247,0.1),transparent 70%);pointer-events:none;"></div>
+      <div style="position:relative;">
+        <div style="display:inline-block;margin-bottom:1rem;">
+          <span style="background:linear-gradient(135deg,rgba(79,142,247,0.15),rgba(0,212,170,0.15));color:#4F8EF7;
+                       border:1px solid rgba(79,142,247,0.3);border-radius:20px;padding:0.3rem 1rem;
+                       font-size:0.72rem;font-weight:700;letter-spacing:1.5px;">AI-POWERED DEAL SCREENING</span></div>
+        <h1 style="font-size:2.4rem;font-weight:900;line-height:1.1;letter-spacing:-0.8px;margin:0 0 1rem;">
+          <span style="color:#F0F4FF;">Screen any deal</span><br>
+          <span style="background:linear-gradient(135deg,#4F8EF7,#00D4AA);-webkit-background-clip:text;
+                       -webkit-text-fill-color:transparent;background-clip:text;">in under a minute.</span></h1>
+        <p style="color:#8B9BC8;font-size:1rem;max-width:520px;margin:0 auto;line-height:1.7;">
+          Upload a pitch deck or CIM. AI generates a structured investment assessment with score, risks, strengths, and a clear recommendation.</p>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    api_key = os.getenv("GROQ_API_KEY","")
+    if not api_key:
+        with st.expander("Enter Groq API Key  —  free at console.groq.com"):
+            api_key = st.text_input("Key",type="password",placeholder="gsk_...",label_visibility="collapsed")
+            st.caption("Get your free key at [console.groq.com](https://console.groq.com) → API Keys → Create Key")
+        if not api_key: st.info("Enter your Groq API key above to get started.")
+
+    D()
+    cl, cr = st.columns(2, gap="large")
+    with cl:
+        st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Deal Name</div>",unsafe_allow_html=True)
+        deal_name_input = st.text_input("Deal name",placeholder="e.g. Apex FinTech Series B",label_visibility="collapsed")
+        st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;margin-top:0.8rem;'>Industry (optional)</div>",unsafe_allow_html=True)
+        industry_input = st.text_input("Industry",placeholder="e.g. FinTech, HealthTech, SaaS",label_visibility="collapsed")
+    with cr:
+        st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Upload Documents <span style='color:#4A5578;font-size:0.8rem;'>— Pitch deck, CIM, financials</span></div>",unsafe_allow_html=True)
+        st.caption("PDF, PPT, Excel, CSV, TXT accepted")
+        sc_files = st.file_uploader("sc_files",type=["pdf","csv","xlsx","xls","pptx","docx","txt"],
+                                     accept_multiple_files=True, label_visibility="collapsed")
+        if sc_files:
+            for f in sc_files:
+                kb = len(f.getvalue())/1024
+                st.markdown(f"<div style='display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0.6rem;background:rgba(79,142,247,0.06);border:1px solid rgba(79,142,247,0.15);border-radius:6px;margin-top:0.3rem;'><span style='color:#4F8EF7;font-size:0.75rem;'>DOC</span><span style='color:#C8D0E8;font-size:0.82rem;'>{f.name}</span><span style='color:#4A5578;font-size:0.75rem;margin-left:auto;'>{kb:.1f} KB</span></div>",unsafe_allow_html=True)
+
+    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='color:#F0F4FF;font-size:0.9rem;font-weight:600;margin-bottom:0.4rem;'>Or Paste Document Text <span style='color:#4A5578;font-size:0.8rem;'>— any format</span></div>",unsafe_allow_html=True)
+    sc_pasted = st.text_area("Paste text",height=120,placeholder="Paste pitch deck text, financials, or any deal information...",label_visibility="collapsed")
+
+    D()
+    _,sc_btn_col,_ = st.columns([1,2,1])
+    with sc_btn_col:
+        go_screen = st.button("Run AI Screening", key="screen_btn", use_container_width=True)
+
+    if go_screen:
+        if not api_key: st.error("Please enter your Groq API key."); st.stop()
+        if not deal_name_input.strip(): st.error("Please enter a deal name."); st.stop()
+        parts = []
+        if sc_files:
+            for uf in sc_files: uf.seek(0); parts.append(f"=== DOCUMENT: {uf.name} ===\n{extract_file(uf)}")
+        if sc_pasted.strip(): parts.append(f"=== PASTED DATA ===\n{sc_pasted.strip()}")
+        if not parts: st.warning("Please upload a file or paste deal information."); st.stop()
+
+        context = f"Deal Name: {deal_name_input}\nIndustry: {industry_input}\n\n" + "\n\n".join(parts)
+        with st.spinner("Screening deal with AI..."):
+            try:
+                sc_data, sc_raw = call_groq(context, api_key, SCREENING_PROMPT)
+            except Exception as e:
+                err = str(e).lower()
+                if "401" in err or "invalid api key" in err:
+                    st.error("Invalid Groq API key.")
+                elif "429" in err or "rate_limit" in err:
+                    st.error("Groq rate limit reached. Wait 60 seconds and try again.")
+                else:
+                    st.error(f"API error: {e}")
+                st.stop()
+
+        if not sc_data:
+            st.warning("Could not parse AI output."); st.text(sc_raw); st.stop()
+
+        # Patch deal name / industry if AI didn't fill them
+        if not sc_data.get("deal_name") or sc_data["deal_name"] in ("string",""):
+            sc_data["deal_name"] = deal_name_input
+        if not sc_data.get("industry") or sc_data["industry"] in ("string",""):
+            sc_data["industry"] = industry_input or "Not specified"
+
+        file_names = [f.name for f in sc_files] if sc_files else []
+        st.session_state.screening_result = sc_data
+
+        # Save deal to DB if logged in
+        if st.session_state.logged_in and st.session_state.user_id:
+            deal_id = db_create_deal(
+                st.session_state.user_id,
+                deal_name_input,
+                industry_input,
+                file_names
+            )
+            db_save_screening(deal_id, sc_data, file_names)
+            st.session_state.active_deal_id = deal_id
+
+        st.rerun()
+
+    D()
+    st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DUE DILIGENCE — SELECT DEAL
+# ═════════════════════════════════════════════════════════════════════════════
+elif st.session_state.page == "dd_select":
+    st.markdown("""
+    <div style="padding:2rem 0 1.5rem;">
+      <div style="color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;margin-bottom:0.4rem;">DUE DILIGENCE</div>
+      <h1 style="font-size:1.8rem;font-weight:800;color:#F0F4FF;margin:0 0 0.3rem;">Select a Deal</h1>
+      <p style="color:#8B9BC8;font-size:0.95rem;margin:0;">Choose an existing deal to open in DD, or start fresh with a new screening.</p>
+    </div>""", unsafe_allow_html=True)
+    D()
+
+    if not st.session_state.logged_in:
+        st.info("Log in to access your deals and Due Diligence projects.")
+        if st.button("Log In / Sign Up", key="dd_login"):
+            st.session_state.page="account"; st.rerun()
+    else:
+        deals = db_get_deals(st.session_state.user_id)
+        dd_deals = [d for d in deals if d.get("status") in ("dd","completed")]
+        sc_only  = [d for d in deals if d.get("status") == "screening"]
+
+        if dd_deals:
+            slabel("ACTIVE DUE DILIGENCE DEALS")
+            for deal in dd_deals:
+                c, b = st.columns([5, 1.5])
+                with c:
+                    sc_data = deal.get("screening_data", {})
+                    sc_col  = status_colour(deal.get("status","dd"))
+                    st.markdown(f"""
+                    <div style="background:#0F1620;border:1px solid rgba(255,255,255,0.07);border-radius:12px;
+                                padding:1rem 1.4rem;margin-bottom:0.4rem;">
+                      <div style="color:#F0F4FF;font-size:0.97rem;font-weight:700;">{deal.get('name','Unnamed')}</div>
+                      <div style="color:#8B9BC8;font-size:0.8rem;margin-top:0.2rem;">{deal.get('industry','') or '—'} &nbsp;·&nbsp; <span style="color:{sc_col};">{status_label(deal.get('status','dd'))}</span> &nbsp;·&nbsp; Score: {sc_data.get('investment_score','—')}/100</div>
+                    </div>""", unsafe_allow_html=True)
+                with b:
+                    st.markdown("<div style='height:0.2rem'></div>", unsafe_allow_html=True)
+                    if st.button("Open DD", key=f"sel_dd_{deal['id']}", use_container_width=True):
+                        st.session_state.active_deal_id = deal["id"]
+                        st.session_state.page = "dd"
+                        st.rerun()
+
+        if sc_only:
+            D()
+            slabel("SCREENING STAGE — CONVERT TO PROCEED", "#F5A623")
+            for deal in sc_only:
+                c, b = st.columns([5, 1.5])
+                with c:
+                    sc_data = deal.get("screening_data", {})
+                    st.markdown(f"""
+                    <div style="background:#0F1620;border:1px solid rgba(245,166,35,0.2);border-radius:12px;
+                                padding:1rem 1.4rem;margin-bottom:0.4rem;">
+                      <div style="color:#F0F4FF;font-size:0.97rem;font-weight:700;">{deal.get('name','Unnamed')}</div>
+                      <div style="color:#8B9BC8;font-size:0.8rem;margin-top:0.2rem;">{deal.get('industry','') or '—'} &nbsp;·&nbsp; <span style="color:#F5A623;">Screening</span> &nbsp;·&nbsp; Score: {sc_data.get('investment_score','—')}/100</div>
+                    </div>""", unsafe_allow_html=True)
+                with b:
+                    st.markdown("<div style='height:0.2rem'></div>", unsafe_allow_html=True)
+                    if st.button("Promote to DD", key=f"promote_{deal['id']}", use_container_width=True):
+                        db_promote_to_dd(deal["id"])
+                        st.session_state.active_deal_id = deal["id"]
+                        st.session_state.page = "dd"
+                        st.rerun()
+
+        if not deals:
+            st.markdown("""
+            <div style="background:#0F1620;border:1px solid rgba(255,255,255,0.07);border-radius:12px;
+                        padding:2rem;text-align:center;">
+              <div style="color:#8B9BC8;font-size:0.95rem;">No deals yet. Run a Deal Screening first.</div>
+            </div>""", unsafe_allow_html=True)
+
+        D()
+        if st.button("+ New Deal Screening", key="dd_to_screen"):
+            st.session_state.page="screening"; st.rerun()
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DUE DILIGENCE — MAIN WORKSPACE
+# ═════════════════════════════════════════════════════════════════════════════
+elif st.session_state.page == "dd":
+    if not st.session_state.active_deal_id:
+        st.session_state.page = "dd_select"; st.rerun()
+
+    deal = db_get_deal(st.session_state.active_deal_id) if st.session_state.logged_in else None
+    if not deal and st.session_state.logged_in:
+        st.session_state.page = "dd_select"; st.rerun()
+
+    sc_data = deal.get("screening_data", {}) if deal else {}
+    dd_data = deal.get("dd_data", {}) if deal else {}
+
+    st.markdown("<div style='margin-bottom:0.3rem'>", unsafe_allow_html=True)
+    if st.button("← Back to Deal List", key="back_dd_list"):
+        st.session_state.page = "dd_select"; st.rerun()
+
+    deal_name = deal.get("name","Deal") if deal else "Due Diligence"
+    st.markdown(f"""
+    <div style="padding:1rem 0 0.5rem;">
+      <div style="color:#8B9BC8;font-size:0.7rem;font-weight:700;letter-spacing:2px;margin-bottom:0.3rem;">DUE DILIGENCE WORKSPACE</div>
+      <h1 style="font-size:1.8rem;font-weight:800;color:#F0F4FF;margin:0 0 0.3rem;">{deal_name}</h1>
+      <div style="color:{status_colour(deal.get('status','dd') if deal else 'dd')};font-size:0.85rem;font-weight:600;">{status_label(deal.get('status','dd') if deal else 'dd')} &nbsp;·&nbsp; <span style="color:#8B9BC8;">{deal.get('industry','') if deal else ''}</span></div>
+    </div>""", unsafe_allow_html=True)
+
+    # If there's screening data, show import banner
+    if sc_data and sc_data.get("investment_score"):
+        sc_col = "#00D4AA" if sc_data.get("recommendation")=="Proceed" else "#FF5C6A"
+        st.markdown(f"""
+        <div style="background:rgba(79,142,247,0.07);border:1px solid rgba(79,142,247,0.2);
+                    border-radius:10px;padding:0.8rem 1.2rem;margin:0.5rem 0 1rem;
+                    display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+          <span style="color:#4F8EF7;font-size:0.85rem;font-weight:600;">✓ Screening data imported</span>
+          <span style="color:#8B9BC8;font-size:0.83rem;">Score: <b style="color:#4F8EF7;">{sc_data.get('investment_score')}/100</b> &nbsp;·&nbsp; Recommendation: <b style="color:{sc_col};">{sc_data.get('recommendation','—')}</b></span>
+        </div>""", unsafe_allow_html=True)
+
+    D()
+
+    api_key = os.getenv("GROQ_API_KEY","")
+    if not api_key:
+        with st.expander("Enter Groq API Key  —  free at console.groq.com"):
+            api_key = st.text_input("Key",type="password",placeholder="gsk_...",label_visibility="collapsed",key="dd_api")
+            st.caption("Get your free key at [console.groq.com](https://console.groq.com) → API Keys → Create Key")
+
+    # DD upload
+    slabel("UPLOAD FINANCIAL STATEMENTS")
+    st.caption("Upload Income Statement, Balance Sheet, and Cash Flow Statement for forensic analysis. Files from screening are pre-loaded conceptually — re-upload for full DD analysis.")
+    cl2, cr2 = st.columns(2, gap="large")
+    with cl2:
+        if deal and deal.get("file_names"):
+            st.markdown("<div style='color:#8B9BC8;font-size:0.82rem;margin-bottom:0.5rem;'>Files from screening:</div>",unsafe_allow_html=True)
+            for fn in deal["file_names"]:
+                st.markdown(f"<div style='display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.6rem;background:rgba(79,142,247,0.05);border:1px solid rgba(79,142,247,0.12);border-radius:6px;margin-bottom:0.25rem;'><span style='color:#4F8EF7;font-size:0.75rem;'>DOC</span><span style='color:#C8D0E8;font-size:0.82rem;'>{fn}</span></div>",unsafe_allow_html=True)
+    with cr2:
+        st.markdown("<div style='color:#F0F4FF;font-size:0.88rem;font-weight:600;margin-bottom:0.4rem;'>Upload additional documents</div>",unsafe_allow_html=True)
+        dd_files = st.file_uploader("dd_files",type=["pdf","csv","xlsx","xls","docx","txt"],
+                                     accept_multiple_files=True,label_visibility="collapsed",key="dd_upload")
+        if dd_files:
+            for f in dd_files:
+                kb=len(f.getvalue())/1024
+                st.markdown(f"<div style='display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0.6rem;background:rgba(79,142,247,0.06);border:1px solid rgba(79,142,247,0.15);border-radius:6px;margin-top:0.3rem;'><span style='color:#4F8EF7;font-size:0.75rem;'>DOC</span><span style='color:#C8D0E8;font-size:0.82rem;'>{f.name}</span><span style='color:#4A5578;font-size:0.75rem;margin-left:auto;'>{kb:.1f} KB</span></div>",unsafe_allow_html=True)
+
+    dd_pasted = st.text_area("Or paste financial data",height=100,placeholder="Paste financial statement data...",label_visibility="visible",key="dd_paste")
+
+    D()
+    _,dd_btn,_ = st.columns([1,2,1])
+    with dd_btn:
+        go_dd = st.button("Run Deep Due Diligence Analysis", key="analyse_btn", use_container_width=True)
+
+    if go_dd:
+        if not api_key: st.error("Please enter your Groq API key."); st.stop()
+        parts = []
+        # Prepend screening summary as context
+        if sc_data:
+            parts.append(f"=== SCREENING SUMMARY (pre-imported) ===\nDeal: {sc_data.get('deal_name','')}\nSummary: {sc_data.get('summary','')}\nInvestment Score: {sc_data.get('investment_score','')}/100\nRecommendation: {sc_data.get('recommendation','')}")
+        if dd_files:
+            for uf in dd_files: uf.seek(0); parts.append(f"=== DOCUMENT: {uf.name} ===\n{extract_file(uf)}")
+        if dd_pasted.strip(): parts.append(f"=== PASTED DATA ===\n{dd_pasted.strip()}")
+        if len(parts) <= 1 and not dd_files and not dd_pasted.strip():
+            st.warning("Please upload financial statements or paste data for the DD analysis."); st.stop()
+
+        with st.spinner("Running deep due diligence analysis..."):
+            try:
+                dd_result, dd_raw = call_groq("\n\n".join(parts), api_key, DD_PROMPT)
+            except Exception as e:
+                err=str(e).lower()
+                if "401" in err or "invalid api key" in err: st.error("Invalid Groq API key.")
+                elif "429" in err or "rate_limit" in err: st.error("Rate limit reached. Wait 60s and retry.")
+                else: st.error(f"API error: {e}")
+                st.stop()
+
+        if not dd_result:
+            st.warning("Could not parse output."); st.text(dd_raw); st.stop()
+
+        # Persist
+        if deal:
+            db_save_dd(deal["id"], dd_result)
+        st.session_state.dd_result = dd_result
+        st.rerun()
+
+    # Show existing DD result
+    if st.session_state.dd_result or dd_data:
+        result_to_show = st.session_state.dd_result or dd_data
+        D()
+        st.markdown("""
+        <div style="background:rgba(0,212,170,0.07);border:1px solid rgba(0,212,170,0.2);border-radius:10px;
+                    padding:0.7rem 1.1rem;margin-bottom:1rem;display:inline-flex;align-items:center;gap:0.6rem;">
+          <span style="color:#00D4AA;font-size:0.88rem;font-weight:600;">✓ Due Diligence analysis complete</span>
+        </div>""", unsafe_allow_html=True)
+        render_full_analysis(result_to_show, kp="dd_main", allow_save=True,
+                             deal_id=deal["id"] if deal else "")
+
+    # Risk tracker always shown in DD
+    if deal:
+        D()
+        render_risk_tracker(deal, dd_data=result_to_show if (st.session_state.dd_result or dd_data) else None)
 
     D()
     st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
@@ -1313,58 +1909,27 @@ elif st.session_state.page == "compare":
     st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SHARED VIEW  (Pro only)
+# SHARED VIEW
 # ═════════════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "shared_view":
     st.markdown("""
     <div style="padding:2rem 0 1.5rem;">
       <h1 style="font-size:1.8rem;font-weight:800;color:#F0F4FF;margin:0 0 0.3rem;">View Shared Report</h1>
-      <p style="color:#8B9BC8;margin:0;">Enter a Share ID to view a shared report.</p>
+      <p style="color:#8B9BC8;margin:0;">Enter a Share ID to view a shared analysis.</p>
     </div>""", unsafe_allow_html=True)
     D()
+    _,mid,_=st.columns([1,2,1])
+    with mid:
+        sid_input=st.text_input("Share ID",placeholder="e.g. A1B2C3D4",key="sid_input")
+        if st.button("Load Report",key="load_share",use_container_width=True):
+            if sid_input.strip():
+                shared=db_get_shared(sid_input.strip())
+                if shared:
+                    st.session_state.loaded_analysis=shared["raw_output"]
+                    st.session_state.page="shared_display"; st.rerun()
+                else: st.error("Share ID not found.")
+            else: st.error("Please enter a Share ID.")
 
-    if not st.session_state.logged_in:
-        st.markdown("""
-        <div style="background:linear-gradient(135deg,rgba(79,142,247,0.08),rgba(0,212,170,0.05));
-                    border:1px solid rgba(79,142,247,0.2);border-radius:14px;padding:2rem;text-align:center;">
-          <div style="font-size:1.5rem;margin-bottom:0.5rem;">🔒</div>
-          <div style="color:#F0F4FF;font-size:1rem;font-weight:700;margin-bottom:0.4rem;">Log in to view shared reports</div>
-          <div style="color:#8B9BC8;font-size:0.88rem;">Viewing shared reports requires a Pro account.</div>
-        </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-        _,gc,_=st.columns([1,2,1])
-        with gc:
-            if st.button("Log In / Sign Up",key="shared_login_btn",use_container_width=True):
-                st.session_state.page="account"; st.rerun()
-    elif not st.session_state.is_pro:
-        st.markdown("""
-        <div style="background:linear-gradient(135deg,rgba(79,142,247,0.08),rgba(155,109,255,0.05));
-                    border:2px solid rgba(79,142,247,0.35);border-radius:14px;padding:2rem;text-align:center;">
-          <div style="font-size:1.5rem;margin-bottom:0.5rem;">⭐</div>
-          <div style="color:#F0F4FF;font-size:1rem;font-weight:700;margin-bottom:0.4rem;">Pro feature</div>
-          <div style="color:#8B9BC8;font-size:0.88rem;margin-bottom:1rem;">Viewing and sharing reports is a Pro-only feature. Upgrade to unlock it.</div>
-        </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-        _,gc,_=st.columns([1,2,1])
-        with gc:
-            if st.button("Upgrade to Pro",key="shared_upgrade_btn",use_container_width=True):
-                st.session_state.page="pricing"; st.rerun()
-    else:
-        _,mid,_=st.columns([1,2,1])
-        with mid:
-            sid_input=st.text_input("Share ID",placeholder="e.g. A1B2C3D4",key="sid_input")
-            if st.button("Load Report",key="load_share",use_container_width=True):
-                if sid_input.strip():
-                    shared=db_get_shared(sid_input.strip())
-                    if shared:
-                        st.session_state.loaded_analysis=shared["raw_output"]
-                        st.session_state.page="shared_display"; st.rerun()
-                    else: st.error("Share ID not found. Please check and try again.")
-                else: st.error("Please enter a Share ID.")
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SHARED DISPLAY
-# ═════════════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "shared_display":
     data=st.session_state.loaded_analysis
     if not data: st.session_state.page="shared_view"; st.rerun()
@@ -1380,9 +1945,9 @@ elif st.session_state.page == "shared_display":
     st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# FEATURES PAGE
+# ABOUT PAGE
 # ═════════════════════════════════════════════════════════════════════════════
-elif st.session_state.page == "features":
+elif st.session_state.page == "about":
     st.markdown("""
     <div style="text-align:center;padding:2.5rem 1rem 2rem;position:relative;">
       <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:500px;height:160px;
@@ -1391,22 +1956,116 @@ elif st.session_state.page == "features":
         <div style="display:inline-block;margin-bottom:1rem;">
           <span style="background:linear-gradient(135deg,rgba(155,109,255,0.15),rgba(79,142,247,0.15));color:#9B6DFF;
                        border:1px solid rgba(155,109,255,0.3);border-radius:20px;padding:0.3rem 1rem;
-                       font-size:0.72rem;font-weight:700;letter-spacing:1.5px;">WHAT DILIGENCEAI CAN DO</span></div>
+                       font-size:0.72rem;font-weight:700;letter-spacing:1.5px;">DEAL ANALYSIS PLATFORM</span></div>
         <h1 style="font-size:2.5rem;font-weight:900;line-height:1.1;letter-spacing:-0.8px;margin:0 0 1rem;color:#F0F4FF;">
           Institutional-grade analysis.<br>
           <span style="background:linear-gradient(135deg,#9B6DFF,#4F8EF7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Available to everyone.</span></h1>
         <p style="color:#8B9BC8;font-size:1rem;max-width:600px;margin:0 auto;line-height:1.7;">
-          DiligenceAI reads your financial statements the same way a chartered accountant or private equity analyst would.</p>
+          DiligenceAI combines Deal Screening and Due Diligence into one connected workflow. Upload once, track the whole lifecycle.</p>
       </div>
     </div>""", unsafe_allow_html=True)
+
     D()
+
+    # ── Deal Screening Section ───────────────────────────────────────────────
+    slabel("DEAL SCREENING")
+    sc1, sc2 = st.columns([1.1, 1], gap="large")
+    with sc1:
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
+                    border-top:2px solid #4F8EF7;border-radius:14px;padding:1.8rem 2rem;">
+          <div style="font-size:1.15rem;font-weight:700;color:#F0F4FF;margin-bottom:0.8rem;">What is Deal Screening?</div>
+          <div style="color:#C8D0E8;font-size:0.93rem;line-height:1.75;margin-bottom:1.2rem;">
+            Deal Screening uses AI to quickly evaluate investment opportunities by analysing pitch decks, financials, and other documents to identify key risks, strengths, and overall attractiveness.
+          </div>
+          <div style="color:#8B9BC8;font-size:0.72rem;font-weight:700;letter-spacing:1.5px;margin-bottom:0.7rem;">WHAT THE AI DOES</div>
+          {''.join([f"<div style='display:flex;align-items:flex-start;gap:0.7rem;padding:0.5rem 0;border-bottom:1px solid rgba(255,255,255,0.04);'><span style='color:#00D4AA;font-weight:700;margin-top:0.05rem;'>✓</span><span style='color:#C8D0E8;font-size:0.87rem;line-height:1.4;'>{t}</span></div>" for t in [
+            "Upload pitch decks or CIMs (PDF, PPT, Excel, Word)",
+            "AI generates a business summary and investment score (0–100)",
+            "Identifies key risks automatically",
+            "Highlights strengths and competitive advantages",
+            "Recommends <b style='color:#00D4AA;'>Proceed</b> or <b style='color:#FF5C6A;'>Pass</b>"
+          ]])}
+        </div>""", unsafe_allow_html=True)
+    with sc2:
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
+                    border-top:2px solid #00D4AA;border-radius:14px;padding:1.8rem 2rem;">
+          <div style="font-size:1.15rem;font-weight:700;color:#F0F4FF;margin-bottom:0.8rem;">How It Works</div>
+          <div style="display:flex;flex-direction:column;gap:0.8rem;">""", unsafe_allow_html=True)
+
+        for i,(num,title,desc) in enumerate([
+            ("01","Upload documents","Drop in a pitch deck, CIM, or financial model — PDF, PPT, Excel all supported."),
+            ("02","AI extracts & analyses","The AI reads all documents, cross-references data, and identifies key patterns."),
+            ("03","Structured insights output","You receive a score, summary, risks, strengths, and a clear Proceed / Pass recommendation."),
+            ("04","Convert to Due Diligence","If you proceed, one click transfers all context into the full DD workspace — no re-uploading.")
+        ]):
+            st.markdown(f"""
+            <div style="display:flex;gap:1rem;align-items:flex-start;padding:0.8rem 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+              <div style="background:linear-gradient(135deg,#4F8EF7,#00D4AA);-webkit-background-clip:text;
+                          -webkit-text-fill-color:transparent;background-clip:text;font-size:1.5rem;font-weight:900;
+                          flex-shrink:0;width:32px;">{num}</div>
+              <div>
+                <div style="color:#F0F4FF;font-size:0.88rem;font-weight:600;margin-bottom:0.2rem;">{title}</div>
+                <div style="color:#8B9BC8;font-size:0.82rem;line-height:1.5;">{desc}</div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("</div></div>", unsafe_allow_html=True)
+
+    D()
+    # ── Due Diligence Section ────────────────────────────────────────────────
+    slabel("DUE DILIGENCE")
+    dd1, dd2 = st.columns([1.1, 1], gap="large")
+    with dd1:
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
+                    border-top:2px solid #9B6DFF;border-radius:14px;padding:1.8rem 2rem;">
+          <div style="font-size:1.15rem;font-weight:700;color:#F0F4FF;margin-bottom:0.8rem;">Deep Forensic Analysis</div>
+          <div style="color:#C8D0E8;font-size:0.93rem;line-height:1.75;margin-bottom:1.2rem;">
+            Once a deal passes screening, move it to Due Diligence for a full chartered-accountant-style forensic review. All context from screening is automatically imported.
+          </div>
+          <div style="color:#8B9BC8;font-size:0.72rem;font-weight:700;letter-spacing:1.5px;margin-bottom:0.7rem;">AI CAPABILITIES IN DD</div>
+          {''.join([f"<div style='display:flex;align-items:flex-start;gap:0.7rem;padding:0.5rem 0;border-bottom:1px solid rgba(255,255,255,0.04);'><span style='color:#9B6DFF;font-weight:700;margin-top:0.05rem;'>✓</span><span style='color:#C8D0E8;font-size:0.87rem;line-height:1.4;'>{t}</span></div>" for t in [
+            "Forensic review of Income Statement, Balance Sheet, and Cash Flow",
+            "Flags legal risks including change of control clauses",
+            "Detects financial inconsistencies across documents",
+            "Identifies missing information that should be requested",
+            "12-metric KPI analysis with commentary",
+            "Full risk, positives, and recommendations report"
+          ]])}
+        </div>""", unsafe_allow_html=True)
+    with dd2:
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
+                    border-top:2px solid #F5A623;border-radius:14px;padding:1.8rem 2rem;">
+          <div style="font-size:1.15rem;font-weight:700;color:#F0F4FF;margin-bottom:0.8rem;">Risk Tracking</div>
+          <div style="color:#C8D0E8;font-size:0.9rem;line-height:1.7;margin-bottom:1rem;">
+            Risks identified during screening automatically appear in the DD Risk Tracker. As DD uncovers additional risks, they're added and tagged by source.
+          </div>
+          <div style="background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:10px;padding:1rem 1.2rem;margin-bottom:0.8rem;">
+            <div style="color:#F5A623;font-size:0.85rem;font-weight:600;margin-bottom:0.3rem;">From Screening</div>
+            <div style="color:#8B9BC8;font-size:0.82rem;">Risks carry forward with their original context</div>
+          </div>
+          <div style="background:rgba(79,142,247,0.06);border:1px solid rgba(79,142,247,0.2);border-radius:10px;padding:1rem 1.2rem;margin-bottom:0.8rem;">
+            <div style="color:#4F8EF7;font-size:0.85rem;font-weight:600;margin-bottom:0.3rem;">From DD Analysis</div>
+            <div style="color:#8B9BC8;font-size:0.82rem;">New risks surfaced during deep analysis are tagged separately</div>
+          </div>
+          <div style="background:rgba(0,212,170,0.06);border:1px solid rgba(0,212,170,0.2);border-radius:10px;padding:1rem 1.2rem;">
+            <div style="color:#00D4AA;font-size:0.85rem;font-weight:600;margin-bottom:0.3rem;">Analyst Notes</div>
+            <div style="color:#8B9BC8;font-size:0.82rem;">Add notes, actions, and context per risk — saved to the deal record</div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+    D()
+    # ── Who is it for ────────────────────────────────────────────────────────
     slabel("WHO IS IT FOR")
-    fc1,fc2,fc3,fc4=st.columns(4,gap="medium")
+    fc1,fc2,fc3,fc4 = st.columns(4, gap="medium")
     for col,(title,desc,colour) in zip([fc1,fc2,fc3,fc4],[
-        ("Business Owners","Understand your financials without a finance background.","#4F8EF7"),
-        ("Accountants","Generate structured analysis for clients in seconds.","#00D4AA"),
-        ("Investors","Assess any company's financial health before deciding.","#9B6DFF"),
-        ("Finance Students","Learn by uploading real statements and comparing results.","#F5A623")]):
+        ("Investors","Screen and track deals across the full investment lifecycle.",    "#4F8EF7"),
+        ("PE / VC","Run institutional-quality forensic analysis at the speed of AI.", "#00D4AA"),
+        ("Accountants","Generate structured analysis for clients in seconds.",          "#9B6DFF"),
+        ("Business Owners","Understand your financials before a capital raise.",        "#F5A623")]):
         with col:
             st.markdown(f"""
             <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
@@ -1414,150 +2073,6 @@ elif st.session_state.page == "features":
               <div style="color:{colour};font-size:0.88rem;font-weight:700;margin-bottom:0.5rem;">{title}</div>
               <div style="color:#8B9BC8;font-size:0.83rem;line-height:1.6;">{desc}</div>
             </div>""", unsafe_allow_html=True)
-    D()
-    slabel("HOW IT WORKS")
-    s1,s2,s3,s4=st.columns(4,gap="medium")
-    for col,(num,title,desc) in zip([s1,s2,s3,s4],[
-        ("01","Get your statements","Gather your Income Statement, Balance Sheet, and Cash Flow Statement from your accountant or Xero/MYOB."),
-        ("02","Upload the files","Select your files. PDF, CSV, Excel (.xlsx), Word (.docx) and TXT supported. Upload all three at once."),
-        ("03","Click Analyse","DiligenceAI cross-references all documents and builds a unified analysis in 20–30 seconds."),
-        ("04","Review and download","Free: TXT only. Pro: PDF, Excel, Word, share links, and more.")]):
-        with col:
-            st.markdown(f"""
-            <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);
-                        border-radius:12px;padding:1.4rem;margin-bottom:0.8rem;">
-              <div style="background:linear-gradient(135deg,#4F8EF7,#00D4AA);-webkit-background-clip:text;
-                          -webkit-text-fill-color:transparent;background-clip:text;font-size:1.8rem;font-weight:900;margin-bottom:0.4rem;">{num}</div>
-              <div style="color:#F0F4FF;font-size:0.88rem;font-weight:700;margin-bottom:0.4rem;">{title}</div>
-              <div style="color:#8B9BC8;font-size:0.82rem;line-height:1.6;">{desc}</div>
-            </div>""", unsafe_allow_html=True)
-    D()
-    slabel("WHAT YOU GET IN EVERY ANALYSIS")
-    fl2,fr2=st.columns(2,gap="large")
-    def frow(t,d,c="#4F8EF7"):
-        return (f"<div style='padding:0.9rem 0;border-bottom:1px solid rgba(255,255,255,0.05);'>"
-                f"<div style='display:flex;align-items:center;gap:0.5rem;margin-bottom:0.2rem;'>"
-                f"<div style='width:6px;height:6px;border-radius:50%;background:{c};'></div>"
-                f"<div style='color:#F0F4FF;font-size:0.88rem;font-weight:600;'>{t}</div></div>"
-                f"<div style='color:#8B9BC8;font-size:0.83rem;line-height:1.55;padding-left:1rem;'>{d}</div></div>")
-    with fl2:
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:1.5rem 1.8rem;">
-          {frow("Financial Health Score","Score out of 10 with Strong / Moderate / Weak rating.","#4F8EF7")}
-          {frow("10 Key Financial Metrics","Revenue, net profit, margins, EBITDA, cash flow, ratios.","#00D4AA")}
-          {frow("Profitability Analysis","Is profit real or accounting-driven?","#9B6DFF")}
-          {frow("Cash Health","Is the business generating cash or reliant on borrowing?","#F5A623")}
-        </div>""", unsafe_allow_html=True)
-    with fr2:
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:1.5rem 1.8rem;">
-          {frow("Working Capital Analysis","Is cash tied up in receivables or inventory?","#4F8EF7")}
-          {frow("Balance Sheet Review","Debt levels, liquidity, and financial risk.","#00D4AA")}
-          {frow("Investor View","Blunt private-equity style interpretation.","#9B6DFF")}
-          {frow("Risks, Positives & Recommendations","Top 3 each, with actionable fixes.","#F5A623")}
-        </div>""", unsafe_allow_html=True)
-    D()
-    st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PRICING PAGE
-# ═════════════════════════════════════════════════════════════════════════════
-elif st.session_state.page == "pricing":
-    st.markdown("""
-    <div style="text-align:center;padding:2.5rem 1rem 2rem;position:relative;">
-      <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:500px;height:160px;
-                  background:radial-gradient(ellipse,rgba(0,212,170,0.1),transparent 70%);pointer-events:none;"></div>
-      <div style="position:relative;">
-        <span style="background:linear-gradient(135deg,rgba(0,212,170,0.15),rgba(79,142,247,0.15));color:#00D4AA;
-                     border:1px solid rgba(0,212,170,0.3);border-radius:20px;padding:0.3rem 1rem;
-                     font-size:0.72rem;font-weight:700;letter-spacing:1.5px;">SIMPLE, TRANSPARENT PRICING</span>
-        <h1 style="font-size:2.5rem;font-weight:900;color:#F0F4FF;margin:1rem 0 0.8rem;letter-spacing:-0.8px;">Start free. Scale when ready.</h1>
-        <p style="color:#8B9BC8;font-size:1rem;max-width:440px;margin:0 auto;">No hidden fees. No lock-in. Upgrade or cancel any time.</p>
-      </div>
-    </div>""", unsafe_allow_html=True)
-    D()
-    _,cf,cp,_=st.columns([1,2,2,1],gap="large")
-    with cf:
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg,#0F1620,#111827);border:1px solid rgba(255,255,255,0.07);border-radius:18px;padding:2rem 1.8rem;">
-          <div style="color:#8B9BC8;font-size:0.68rem;font-weight:700;letter-spacing:2px;margin-bottom:0.7rem;">FREE PLAN</div>
-          <div style="font-size:3rem;font-weight:900;color:#F0F4FF;line-height:1;margin-bottom:0.3rem;">$0</div>
-          <div style="color:#4A5578;font-size:0.87rem;margin-bottom:1.8rem;">No credit card required</div>
-          <div style="margin-bottom:2rem;">
-            {tick("5 analyses per month")}
-            {tick("Upload up to 2 documents")}
-            {tick("Full dashboard output")}
-            {tick("Download as TXT")}
-            {tick("Save analyses to dashboard")}
-            {cross("PDF download")}
-            {cross("Excel download")}
-            {cross("Word document download")}
-            {cross("Shareable report links")}
-            {cross("Unlimited analyses")}
-          </div>
-        </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-        if st.button("Get Started Free",key="cta_free",use_container_width=True):
-            st.session_state.auth_tab="signup"; st.session_state.page="account"; st.rerun()
-    with cp:
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg,rgba(79,142,247,0.08),rgba(0,212,170,0.05));
-                    border:2px solid rgba(79,142,247,0.35);border-radius:18px;padding:2rem 1.8rem;position:relative;">
-          <div style="position:absolute;top:-13px;left:50%;transform:translateX(-50%);
-                      background:linear-gradient(135deg,#4F8EF7,#00D4AA);color:#080C14;
-                      font-size:0.68rem;font-weight:800;letter-spacing:1.5px;padding:0.25rem 1rem;border-radius:20px;white-space:nowrap;">BEST VALUE</div>
-          <div style="color:#4F8EF7;font-size:0.68rem;font-weight:700;letter-spacing:2px;margin-bottom:0.7rem;">PRO PLAN</div>
-          <div style="margin-bottom:0.2rem;">
-            <span style="color:#4A5578;font-size:1.2rem;font-weight:500;text-decoration:line-through;margin-right:0.4rem;">$15</span>
-            <span style="font-size:3rem;font-weight:900;letter-spacing:-1px;background:linear-gradient(135deg,#4F8EF7,#00D4AA);
-                         -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">$10</span>
-            <span style="color:#8B9BC8;font-size:0.9rem;"> / month</span>
-          </div>
-          <div style="display:inline-block;background:rgba(0,212,170,0.12);color:#00D4AA;border:1px solid rgba(0,212,170,0.3);
-                      border-radius:6px;padding:0.15rem 0.6rem;font-size:0.72rem;font-weight:700;margin-bottom:0.8rem;">33% OFF — LIMITED TIME</div>
-          <div style="color:#4A5578;font-size:0.87rem;margin-bottom:1rem;">Cancel any time. No lock-in.</div>
-          <div style="margin-bottom:2rem;">
-            {tick("Unlimited analyses")}
-            {tick("Upload all 3 statements")}
-            {tick("Full dashboard output")}
-            {tick("Download as TXT")}
-            {tick("Download as PDF")}
-            {tick("Download as Excel (.xlsx)")}
-            {tick("Download as Word (.docx)")}
-            {tick("Save and compare analyses")}
-            {tick("Shareable report links")}
-            {tick("Priority processing")}
-          </div>
-        </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-        if st.button("Sign Up for Pro",key="cta_pro",use_container_width=True):
-            st.session_state.auth_tab="signup"; st.session_state.page="account"; st.rerun()
-    D()
-    st.markdown("""
-    <div style="text-align:center;padding:0.5rem 0 1.2rem;">
-      <h2 style="color:#F0F4FF;font-size:1.4rem;font-weight:700;margin:0 0 0.4rem;">Join the Pro waitlist</h2>
-      <p style="color:#8B9BC8;font-size:0.9rem;margin:0;">Payments are coming soon. Leave your email and we will notify you at launch.</p>
-    </div>""", unsafe_allow_html=True)
-    _,wl,_=st.columns([1,2,1])
-    with wl:
-        wl_email=st.text_input("Email",placeholder="you@example.com",label_visibility="collapsed",key="wl_email")
-        if st.button("Notify me when Pro launches",key="wl_btn",use_container_width=True):
-            if wl_email and "@" in wl_email: st.success(f"Thanks! We will be in touch at {wl_email}.")
-            else: st.error("Please enter a valid email address.")
-    D()
-    st.markdown("""<div style="text-align:center;padding:0.5rem 0 1.2rem;">
-      <div style="color:#4A5578;font-size:0.68rem;font-weight:700;letter-spacing:2px;margin-bottom:0.5rem;">FAQ</div>
-      <h2 style="color:#F0F4FF;font-size:1.4rem;font-weight:700;margin:0;">Common questions</h2>
-    </div>""", unsafe_allow_html=True)
-    _,faq,_=st.columns([1,3,1])
-    with faq:
-        for q,a in [
-            ("Do I need a credit card for the free plan?","No. The free plan requires no payment details at all."),
-            ("What counts as one analysis?","Each time you click Analyse, that counts as one. Uploading three statements at once is still a single analysis."),
-            ("Can I cancel the Pro plan at any time?","Yes. No lock-in. Cancel at any time and retain access until the end of your billing period."),
-            ("Is my financial data kept private?","Documents are processed securely and not stored beyond the current session."),
-            ("What currencies are supported?","Any currency in your documents — NZD, AUD, USD, GBP, and others are handled automatically.")]:
-            with st.expander(q):
-                st.markdown(f"<div style='color:#C8D0E8;font-size:0.9rem;line-height:1.65;'>{a}</div>",unsafe_allow_html=True)
     D()
     st.markdown("<p style='text-align:center;color:#4A5578;font-size:0.76rem;'>DiligenceAI &nbsp;·&nbsp; For informational purposes only — not financial advice.</p>",unsafe_allow_html=True)
